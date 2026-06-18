@@ -307,7 +307,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       rt.abortSignal = controller.signal;
       try {
         const result = await rt.shell(message.command);
-        if (message.command.trim() !== "clear") await appendHistory({ command: message.command, result });
+        if (!["clear", "reset"].includes(message.command.trim())) {
+          await appendHistory({ command: message.command, result });
+        }
         return { ok: true, result };
       } catch (error) {
         if (controller.signal.aborted) throw new Error("aborted");
