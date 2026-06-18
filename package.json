@@ -1,0 +1,22 @@
+{
+  "name": "dietsurf",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "esbuild worker.js sidepanel.js --bundle --format=esm --target=chrome120 --outdir=dist",
+    "node": "node bin/dietsurf-node.js",
+    "dev:extension": "node scripts/extension-logger.mjs"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "2.0.51",
+    "ai": "6.0.208",
+    "dotenv": "^17.4.2",
+    "jslike": "1.8.11",
+    "puppeteer-core": "25.1.0",
+    "shlex": "3.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1"
+  }
+}

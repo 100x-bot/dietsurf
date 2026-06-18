@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "DietSurf",
+  "version": "0.0.1",
+  "action": {
+    "default_title": "DietSurf"
+  },
+  "background": {
+    "service_worker": "dist/worker.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": ["sidePanel", "storage", "tabs", "scripting"],
+  "host_permissions": ["<all_urls>"]
+}

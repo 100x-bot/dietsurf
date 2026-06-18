@@ -1,0 +1,6 @@
+{
+  "driver": "puppeteer-core",
+  "headless": false,
+  "executablePath": "",
+  "userDataDir": "./tmp/chrome"
+}

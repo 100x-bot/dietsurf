@@ -1,0 +1,6 @@
+{
+  "baseUrl": "https://api.getlilac.com/v1",
+  "apiKey": "",
+  "apiKeyEnv": "LILAC_API_KEY",
+  "model": "minimaxai/minimax-m2.7"
+}
