@@ -149,9 +149,19 @@ async function upgradeDefaultFile(workspace, sourcePath, shouldReplace) {
   const path = workspacePath(workspace, sourcePath);
   const current = await db.files.get(path);
   if (!current) return;
-  if (!shouldReplace(current.text)) return;
   const response = await fetch(chrome.runtime.getURL(sourcePath.slice(1)));
-  if (response.ok) await writeFile(path, workspaceText(workspace, sourcePath, await response.text()));
+  if (!response.ok) return;
+  const packaged = await response.text();
+  if (!shouldReplace(current.text, packaged)) return;
+  await writeFile(path, workspaceText(workspace, sourcePath, packaged));
+}
+
+function readJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
 }
 
 async function upgradeDefaultFiles() {
@@ -164,10 +174,19 @@ async function upgradeWorkspaceDefaultFiles(workspace) {
   ) || (
     text.includes("DietSurf is a tiny shell over a virtual project.") &&
     !text.includes("Host package/build commands such as npm")
+  ) || (
+    !text.includes("Core architecture:") ||
+    !text.includes("Agent contract:") ||
+    !text.includes("LLM and prompt path:")
   ));
   await upgradeDefaultFile(workspace, "/manifest.json", (text) => (
     text.includes('"service_worker": "dist/worker.js"')
   ));
+  await upgradeDefaultFile(workspace, "/etc/llm.json", (text, packaged) => {
+    const current = readJson(text);
+    const next = readJson(packaged);
+    return !current.apiKey && Boolean(next.apiKey);
+  });
   await upgradeDefaultFile(workspace, "/sidepanel.html", (text) => (
     text.includes('src="dist/sidepanel.js"')
   ));
@@ -235,6 +254,9 @@ async function upgradeWorkspaceDefaultFiles(workspace) {
   ));
   await upgradeDefaultFile(workspace, "/src/ui.css", (text) => (
     text.includes("height: 100dvh")
+  ) || (
+    text.includes("#35f06b") &&
+    !text.includes("var(--dietsurf-accent")
   ) || (
     text.includes("#dietsurf-prompt:focus") &&
     !text.includes("#dietsurf-status")

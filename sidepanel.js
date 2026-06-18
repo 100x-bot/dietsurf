@@ -68,15 +68,61 @@ function setFrameStyle() {
     }
 
     .dietsurf-pane {
+      --dietsurf-accent: #35f06b;
+      --dietsurf-accent-ink: #041007;
+      --dietsurf-pane-bg: #080808;
+      --dietsurf-pane-header: #0d0d0d;
+      --dietsurf-pane-border: #242424;
       display: grid;
       grid-template-rows: 25px minmax(0, 1fr);
+      position: relative;
       min-height: 0;
-      border-top: 1px solid #242424;
-      background: #080808;
+      border-top: 1px solid var(--dietsurf-pane-border);
+      background: var(--dietsurf-pane-bg);
+      overflow: hidden;
     }
 
     .dietsurf-pane:first-child {
       border-top: 0;
+    }
+
+    .dietsurf-pane[data-pane="main"] {
+      --dietsurf-accent: #35f06b;
+      --dietsurf-accent-ink: #041007;
+      --dietsurf-pane-bg: #07100a;
+      --dietsurf-pane-header: #09140d;
+      --dietsurf-pane-border: #17351e;
+    }
+
+    .dietsurf-pane[data-pane="staging"] {
+      --dietsurf-accent: #f5b84b;
+      --dietsurf-accent-ink: #1b1000;
+      --dietsurf-pane-bg: #120d06;
+      --dietsurf-pane-header: #171006;
+      --dietsurf-pane-border: #493313;
+    }
+
+    .dietsurf-pane[data-pane="staging"] .dietsurf-pane-header {
+      padding-right: 84px;
+    }
+
+    .dietsurf-pane[data-pane="staging"]::after {
+      content: "STAGING";
+      position: absolute;
+      top: 18px;
+      right: -38px;
+      z-index: 3;
+      width: 132px;
+      height: 18px;
+      background: var(--dietsurf-accent);
+      color: var(--dietsurf-accent-ink);
+      font-size: 10px;
+      font-weight: 800;
+      line-height: 18px;
+      text-align: center;
+      letter-spacing: 0.08em;
+      transform: rotate(38deg);
+      pointer-events: none;
     }
 
     .dietsurf-pane-header {
@@ -85,15 +131,15 @@ function setFrameStyle() {
       gap: 8px;
       min-width: 0;
       padding: 0 10px;
-      border-bottom: 1px solid #1b1b1b;
-      background: #0d0d0d;
+      border-bottom: 1px solid var(--dietsurf-pane-border);
+      background: var(--dietsurf-pane-header);
       color: #a8a8a8;
       font-size: 11px;
       line-height: 25px;
     }
 
     .dietsurf-pane-title {
-      color: #e5e5e5;
+      color: var(--dietsurf-accent);
       font-weight: 700;
     }
 
@@ -114,7 +160,7 @@ function setFrameStyle() {
       color: #8b8b8b;
     }
 
-    .dietsurf-pane-state[data-state="running"] { color: #35f06b; }
+    .dietsurf-pane-state[data-state="running"] { color: var(--dietsurf-accent); }
     .dietsurf-pane-state[data-state="error"] { color: #ff6b5a; }
     .dietsurf-pane-state[data-state="aborted"] { color: #d0d0d0; }
 

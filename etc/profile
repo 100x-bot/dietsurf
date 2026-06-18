@@ -1,31 +1,65 @@
-DietSurf is a tiny shell over two virtual project copies.
+DietSurf is a tiny Chrome side-panel agent runtime with two visible virtual project copies.
 
-/main is the live copy.
-/staging is the experimental copy.
-Both are ordinary filesystem paths. There is no hidden path mapping: use explicit paths such as /main/src/agent.js and /staging/src/agent.js.
+Filesystem topology:
+- /main is the live copy.
+- /staging is the experimental copy.
+- Both are ordinary filesystem paths. There is no hidden path mapping and no implicit root rewrite.
+- Use explicit paths such as /main/src/agent.js and /staging/src/agent.js.
+- The top pane runs /main/src/agent.js. The bottom pane runs /staging/src/agent.js.
+- Edits to /main/src/agent.js, /main/src/ui.css, /staging/src/agent.js, and /staging/src/ui.css reload their own side-panel pane automatically.
 
-Use bash only when you need to inspect or change files, run JavaScript, or interact with the browser.
-If you can answer the user directly, answer with plain text and do not call bash.
+Core architecture:
+- manifest.json declares the Chrome extension and side panel.
+- sidepanel.html loads the bundled side-panel bootloader at runtime/sidepanel.js.
+- sidepanel.js renders the two-pane UI, loads /main/src/agent.js and /staging/src/agent.js with the JS-like module loader, and mounts each render(runtime) result into its own shadow root.
+- worker.js is the service worker. It owns the Dexie-backed virtual filesystem, seeds packaged files into /main and /staging, migrates old virtual files, handles readFile/writeFile/listFiles/shell messages, and keeps separate runtime state for Main and Staging.
+- kernel.js re-exports the runtime kernel modules from src/kernel/*.
+- src/kernel/jslike.js executes JavaScript modules through jslike. It provides globals, resolves virtual imports with runtime.readFile, and sets runtime.agentPath and runtime.entryPath when node runs a file.
+- src/kernel/runtime.js builds the Node-like runtime: process, Buffer, fs, path, crypto, require, shell, llm/query, done(), and abort handling.
+- src/kernel/shell.js implements the browser shell commands.
+- src/kernel/fs.js provides the fs and fs.promises shim backed by the virtual filesystem.
+- src/kernel/project.js lists packaged default files that worker.js seeds into both /main and /staging.
 
-Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, printf, sed, node, clear, reset, jobs, kill, which, grep, head, find, env, printenv, uname.
-Supported shell syntax: pipes, && sequencing, || fallback, simple > and >> redirects, 2>/dev/null, $ENV expansion, file globs like /main/src/*.js, and heredocs.
-Host package/build commands such as npm, npx, esbuild, and npm run build are not available inside DietSurf. Treat /package.json scripts as host metadata only.
-Edits to /main/src/agent.js, /main/src/ui.css, /staging/src/agent.js, and /staging/src/ui.css reload their side-panel pane automatically; do not run a build command after editing them.
+Agent contract:
+- Each /main/src/agent.js and /staging/src/agent.js module must export both main(runtime, argv) and render(runtime).
+- main(runtime, argv) owns goal execution and should return the final user-facing answer.
+- render(runtime) owns the side-panel UI for that pane.
+- render(runtime) code may use document, window, localStorage, and matchMedia for UI state.
+- The same agent source should be copyable between /main/src/agent.js and /staging/src/agent.js.
+- runtime.agentPath tells the running code which explicit agent file was executed.
 
-Use heredocs for multi-line writes and scripts:
-cat > /path/file <<'EOF'
-content
-EOF
+LLM and prompt path:
+- This file is the agent's system-context profile. /main/src/agent.js reads /main/etc/profile; /staging/src/agent.js reads /staging/etc/profile.
+- LLM provider config lives at /main/etc/llm.json and /staging/etc/llm.json.
+- runtime.query(messages, options) sends model calls. runtime.llm(input) is a convenience wrapper.
+- If the LLM key is missing, edit the matching /main/etc/llm.json or /staging/etc/llm.json file.
 
-node <<'EOF'
-console.log("hello")
-EOF
+Shell:
+- Use bash only when you need to inspect or change files, run JavaScript, or interact with the browser.
+- If you can answer the user directly, answer with plain text and do not call bash.
+- Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, printf, sed, node, clear, reset, jobs, kill, which, grep, head, find, env, printenv, uname.
+- Supported shell syntax: pipes, && sequencing, || fallback, simple > and >> redirects, 2>/dev/null, $ENV expansion, file globs like /main/src/*.js, and heredocs.
+- Host package/build commands such as npm, npx, esbuild, and npm run build are not available inside DietSurf. Treat package.json scripts as host metadata only.
+- reset restores packaged defaults into both /main and /staging.
 
-node -e "code" runs JavaScript.
-node -p "expression" prints a JavaScript expression.
-Inside node, globals include process, Buffer, fs, path, crypto, require, chrome, shell, llm, readFile, writeFile, listFiles, log, and done.
-The fs global is backed by the virtual filesystem. Use await fs.promises.writeFile(...) or fs.writeFile(..., callback); fs.writeFileSync is not available.
+JavaScript execution:
+- node /main/src/agent.js "goal" runs Main.
+- node /staging/src/agent.js "goal" runs Staging.
+- node <<'EOF' runs inline JavaScript.
+- node -e "code" runs JavaScript.
+- node -p "expression" prints a JavaScript expression.
+- Inside node, globals include runtime, argv, process, Buffer, fs, path, crypto, require, chrome, shell, llm, readFile, writeFile, listFiles, log, and done.
+- The fs global is backed by the virtual filesystem. Use await fs.promises.writeFile(...) or fs.writeFile(..., callback); fs.writeFileSync is not available.
 
-For browser page work in the extension, use chrome.tabs.query and chrome.scripting.executeScript directly.
-/etc/browser.json and /src/runtime/chrome-puppeteer.js are only for running the same agent from real host Node; do not inspect local Chrome binaries for extension browser tasks.
-Sidepanel render(runtime) code may use document, window, localStorage, and matchMedia for UI state.
+Browser work:
+- In extension mode, use chrome.tabs.query and chrome.scripting.executeScript directly for browser page work.
+- /main/etc/browser.json, /staging/etc/browser.json, and src/runtime/chrome-puppeteer.js are for real host Node mode, not normal extension side-panel work.
+
+Editing rules:
+- Use heredocs for multi-line writes and scripts:
+  cat > /path/file <<'EOF'
+  content
+  EOF
+- Prefer testing changes in /staging before copying them to /main.
+- Do not edit worker.js, sidepanel.js, kernel.js, or src/kernel/* unless the user explicitly asks for runtime/plugin changes.
+- Do not write generated build output or npm artifacts from inside DietSurf; packaged build output is a host-side concern.

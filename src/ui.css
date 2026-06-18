@@ -52,7 +52,7 @@ body {
 }
 
 #dietsurf-status[data-state="running"] {
-  color: #35f06b;
+  color: var(--dietsurf-accent, #35f06b);
 }
 
 #dietsurf-status[data-state="error"] {
@@ -75,11 +75,11 @@ body {
   resize: none;
   background: #101010;
   color: #e5e5e5;
-  caret-color: #35f06b;
+  caret-color: var(--dietsurf-accent, #35f06b);
   font: inherit;
   line-height: 1.45;
 }
 
 #dietsurf-prompt:focus {
-  border-top-color: #35f06b;
+  border-top-color: var(--dietsurf-accent, #35f06b);
 }

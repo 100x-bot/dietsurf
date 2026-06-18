@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import "dotenv/config";
 import { spawn } from "node:child_process";
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PROJECT_FILES } from "../src/kernel/project.js";
@@ -22,12 +23,29 @@ async function copyIntoUnpacked(file) {
   const from = path.join(root, relative);
   const to = path.join(unpacked, relative);
   await mkdir(path.dirname(to), { recursive: true });
-  await copyFile(from, to);
+  try {
+    await copyFile(from, to);
+  } catch (error) {
+    if (error?.code !== "ENOENT" || !(/^\/home\//.test(file) || /^\/var\//.test(file))) throw error;
+    await writeFile(to, "");
+  }
+}
+
+async function injectLocalLlmKey() {
+  if (!process.env.LILAC_API_KEY) return false;
+  await writeFile(path.join(unpacked, "etc", "llm.json"), JSON.stringify({
+    baseUrl: "https://api.getlilac.com/v1",
+    apiKey: process.env.LILAC_API_KEY,
+    apiKeyEnv: "LILAC_API_KEY",
+    model: "minimaxai/minimax-m2.7"
+  }, null, 2));
+  return true;
 }
 
 await rm(unpacked, { recursive: true, force: true });
 await mkdir(runtimeDir, { recursive: true });
 for (const file of PROJECT_FILES) await copyIntoUnpacked(file);
+const injectedKey = await injectLocalLlmKey();
 
 await run(esbuild, [
   "worker.js",
@@ -39,3 +57,4 @@ await run(esbuild, [
 ]);
 
 console.log(`built ${path.relative(root, unpacked)}`);
+if (injectedKey) console.log("injected LILAC_API_KEY into ignored build artifacts");
