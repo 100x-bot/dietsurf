@@ -167,7 +167,7 @@ export function render(runtime) {
   const complete = (script) => {
     const lines = script.replace(/\r\n/g, "\n").split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(/<<['"]?([A-Za-z0-9_.-]+)['"]?\s*$/);
+      const match = lines[i].match(/<<\s*['"]?([A-Za-z0-9_.-]+)['"]?(?:\s|$)/);
       if (match && !lines.slice(i + 1).some((line) => line === match[1])) return false;
     }
     return true;

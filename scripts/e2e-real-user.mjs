@@ -7,6 +7,7 @@ import { join } from "node:path";
 import puppeteer from "puppeteer-core";
 
 const root = process.cwd();
+const extensionRoot = join(root, "build", "unpacked");
 const chromePath =
   process.env.CHROME_PATH ||
   (process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "");
@@ -43,13 +44,13 @@ const browser = await puppeteer.launch({
   headless: false,
   pipe: true,
   userDataDir,
-  enableExtensions: [root],
+  enableExtensions: [extensionRoot],
   args: ["--no-first-run", "--no-default-browser-check"]
 });
 
 try {
   const workerTarget = await browser.waitForTarget(
-    (target) => target.type() === "service_worker" && target.url().includes("/dist/worker.js"),
+    (target) => target.type() === "service_worker" && target.url().includes("/runtime/worker.js"),
     { timeout: 10000 }
   );
   const extensionId = new URL(workerTarget.url()).host;

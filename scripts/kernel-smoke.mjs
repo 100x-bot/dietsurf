@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createRuntime } from "../kernel.js";
+import { createRuntime, runSource } from "../kernel.js";
 
 function createMemoryRuntime(initial = {}) {
   const files = new Map(Object.entries(initial));
@@ -56,5 +56,27 @@ await assert.rejects(
   runtime.shell('node -e \'fs.writeFileSync("/tmp/e","bad")\''),
   /writeFileSync/
 );
+
+const storage = new Map();
+runtime.document = { documentElement: { dataset: {} } };
+runtime.localStorage = {
+  getItem: (key) => storage.get(key) ?? null,
+  setItem: (key, value) => storage.set(key, String(value))
+};
+runtime.matchMedia = (query) => ({ media: query, matches: query.includes("dark") });
+runtime.window = {
+  localStorage: runtime.localStorage,
+  matchMedia: runtime.matchMedia
+};
+
+await runSource(runtime, `
+  const stored = localStorage.getItem("dietsurf-theme");
+  const theme = stored || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = theme;
+  window.localStorage.setItem("dietsurf-theme", theme);
+`, "/tmp/ui-globals-smoke.js");
+
+assert.equal(runtime.document.documentElement.dataset.theme, "dark");
+assert.equal(storage.get("dietsurf-theme"), "dark");
 
 console.log("kernel smoke passed");

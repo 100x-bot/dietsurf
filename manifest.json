@@ -6,7 +6,7 @@
     "default_title": "DietSurf"
   },
   "background": {
-    "service_worker": "dist/worker.js",
+    "service_worker": "runtime/worker.js",
     "type": "module"
   },
   "side_panel": {

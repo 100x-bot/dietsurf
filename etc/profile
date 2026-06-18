@@ -5,6 +5,8 @@ If you can answer the user directly, answer with plain text and do not call bash
 
 Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, printf, sed, node, clear, reset, jobs, kill, which, grep, head, find, env, printenv, uname.
 Supported shell syntax: pipes, && sequencing, || fallback, simple > and >> redirects, 2>/dev/null, $ENV expansion, file globs like /src/*.js, and heredocs.
+Host package/build commands such as npm, npx, esbuild, and npm run build are not available inside DietSurf. Treat /package.json scripts as host metadata only.
+Edits to /src/agent.js and /src/ui.css reload in the side panel automatically; do not run a build command after editing them.
 
 Use heredocs for multi-line writes and scripts:
 cat > /path/file <<'EOF'
@@ -22,3 +24,4 @@ The fs global is backed by the virtual filesystem. Use await fs.promises.writeFi
 
 For browser page work in the extension, use chrome.tabs.query and chrome.scripting.executeScript directly.
 /etc/browser.json and /src/runtime/chrome-puppeteer.js are only for running the same agent from real host Node; do not inspect local Chrome binaries for extension browser tasks.
+Sidepanel render(runtime) code may use document, window, localStorage, and matchMedia for UI state.

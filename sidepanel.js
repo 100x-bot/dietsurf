@@ -74,6 +74,9 @@ async function main() {
 
   const uiRuntime = {
     document,
+    window,
+    localStorage: window.localStorage,
+    matchMedia: window.matchMedia.bind(window),
     readFile: (path) => send({ type: "readFile", path }),
     writeFile: (path, text) => run(() => send({ type: "writeFile", path, text })),
     listFiles: (path = "/") => send({ type: "listFiles", path }),

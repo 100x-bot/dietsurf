@@ -8,6 +8,7 @@ import path from "node:path";
 import puppeteer from "puppeteer-core";
 
 const root = process.cwd();
+const extensionRoot = path.join(root, "build", "unpacked");
 const session = new Date().toISOString().replace(/[:.]/g, "-");
 const logsDir = path.join(root, "logs", session);
 const chromePath =
@@ -87,7 +88,7 @@ async function attachTarget(target) {
   const type = target.type();
   const url = target.url();
   write("console", { source: "target", type, url });
-  if (type === "service_worker" && url.includes("/dist/worker.js")) await attachWorker(target);
+  if (type === "service_worker" && url.includes("/runtime/worker.js")) await attachWorker(target);
   if (type === "page") {
     const page = await target.page();
     if (page) await attachPage(page, url.startsWith("chrome-extension://") ? "extension-page" : "page");
@@ -109,7 +110,7 @@ const browser = await puppeteer.launch({
   headless: false,
   pipe: true,
   userDataDir,
-  enableExtensions: [root],
+  enableExtensions: [extensionRoot],
   args: ["--no-first-run", "--no-default-browser-check"]
 });
 
@@ -117,7 +118,7 @@ browser.on("targetcreated", (target) => attachTarget(target).catch((error) => wr
 for (const target of browser.targets()) await attachTarget(target);
 
 const workerTarget = await browser.waitForTarget(
-  (target) => target.type() === "service_worker" && target.url().includes("/dist/worker.js"),
+  (target) => target.type() === "service_worker" && target.url().includes("/runtime/worker.js"),
   { timeout: 10000 }
 );
 const extensionId = new URL(workerTarget.url()).host;

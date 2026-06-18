@@ -121,6 +121,29 @@ async function upgradeDefaultFile(path, shouldReplace) {
 async function upgradeDefaultFiles() {
   await upgradeDefaultFile("/etc/profile", (text) => (
     text.trim() === "# DietSurf profile"
+  ) || (
+    text.includes("DietSurf is a tiny shell over a virtual project.") &&
+    !text.includes("Host package/build commands such as npm")
+  ));
+  await upgradeDefaultFile("/manifest.json", (text) => (
+    text.includes('"service_worker": "dist/worker.js"')
+  ));
+  await upgradeDefaultFile("/sidepanel.html", (text) => (
+    text.includes('src="dist/sidepanel.js"')
+  ));
+  await upgradeDefaultFile("/package.json", (text) => (
+    text.includes("--outdir=dist")
+  ));
+  await upgradeDefaultFile("/sidepanel.js", (text) => (
+    text.includes("interrupt: () => undefined")
+  ) || (
+    text.includes('throw new Error((response?.error || "worker error").split("\\n")[0]);')
+  ));
+  await upgradeDefaultFile("/worker.js", (text) => (
+    text.includes('"service_worker": "dist/worker.js"')
+  ) || (
+    text.includes('await upgradeDefaultFile("/etc/profile"') &&
+    !text.includes('await upgradeDefaultFile("/sidepanel.html"')
   ));
   await upgradeDefaultFile("/src/agent.js", (text) => (
     text.includes('input.placeholder = "node /src/agent.js \\"goal\\""') &&

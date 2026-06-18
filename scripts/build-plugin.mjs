@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { spawn } from "node:child_process";
-import { access, chmod, copyFile, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -15,32 +15,6 @@ const packSrc = path.join(buildDir, "pack-src");
 const crxOut = path.join(buildDir, "plugin.crx");
 const keyDir = process.env.DIETSURF_KEY_DIR || path.join(homedir(), ".dietsurf");
 const pemOut = process.env.DIETSURF_PLUGIN_KEY || path.join(keyDir, "plugin.pem");
-
-const files = [
-  "manifest.json",
-  "sidepanel.html",
-  "dist/worker.js",
-  "dist/sidepanel.js",
-  "kernel.js",
-  "worker.js",
-  "sidepanel.js",
-  "package.json",
-  "bin/dietsurf-node.js",
-  "etc/llm.json",
-  "etc/browser.json",
-  "etc/profile",
-  "src/agent.js",
-  "src/runtime/chrome-puppeteer.js",
-  "src/kernel/project.js",
-  "src/kernel/path.js",
-  "src/kernel/jslike.js",
-  "src/kernel/fs.js",
-  "src/kernel/shell.js",
-  "src/kernel/runtime.js",
-  "src/ui.css",
-  "var/log/history.jsonl",
-  "home/user/notes.md"
-];
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -58,13 +32,6 @@ async function exists(file) {
   }
 }
 
-async function copyIntoStage(file) {
-  const from = path.join(root, file);
-  const to = path.join(unpacked, file);
-  await mkdir(path.dirname(to), { recursive: true });
-  await copyFile(from, to);
-}
-
 async function injectLocalLlmKey(dir) {
   if (!process.env.LILAC_API_KEY) return false;
   await writeFile(path.join(dir, "etc", "llm.json"), JSON.stringify({
@@ -79,19 +46,11 @@ async function injectLocalLlmKey(dir) {
 if (!chromePath) throw new Error("set CHROME_PATH");
 
 await run("npm", ["run", "build"]);
-await rm(buildDir, { recursive: true, force: true });
-await mkdir(unpacked, { recursive: true });
 await mkdir(keyDir, { recursive: true });
-for (const file of files) await copyIntoStage(file);
 const injectedKey = await injectLocalLlmKey(unpacked);
 await rm(packSrc, { recursive: true, force: true });
 await mkdir(path.dirname(packSrc), { recursive: true });
-for (const file of files) {
-  const from = path.join(unpacked, file);
-  const to = path.join(packSrc, file);
-  await mkdir(path.dirname(to), { recursive: true });
-  await copyFile(from, to);
-}
+await cp(unpacked, packSrc, { recursive: true });
 await injectLocalLlmKey(packSrc);
 
 const args = [`--pack-extension=${packSrc}`];

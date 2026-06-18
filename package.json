@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "esbuild worker.js sidepanel.js --bundle --format=esm --target=chrome120 --outdir=dist",
+    "build": "node scripts/build-unpacked.mjs",
     "build:plugin": "node scripts/build-plugin.mjs",
     "test": "node scripts/kernel-smoke.mjs",
     "node": "node bin/dietsurf-node.js",
