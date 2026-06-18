@@ -1,8 +1,8 @@
-import { loadModule, toErrorText } from "./kernel.js";
+import { Buffer, loadModule, toErrorText } from "./kernel.js";
 
 const PANES = [
-  { id: "main", title: "Main", agentPath: "/main/src/agent.js", stylePath: "/main/src/ui.css" },
-  { id: "staging", title: "Staging", agentPath: "/staging/src/agent.js", stylePath: "/staging/src/ui.css" }
+  { id: "main", title: "Main", agentPath: "/src/agent.js", stylePath: "/src/ui.css" },
+  { id: "staging", title: "Staging", agentPath: "/src/agent.js", stylePath: "/src/ui.css" }
 ];
 
 const states = new Map();
@@ -19,7 +19,8 @@ function stateFor(id) {
   return states.get(id);
 }
 
-function paneForPath(path) {
+function paneForPath(path, workspace) {
+  if (workspace) return PANES.some((pane) => pane.id === workspace) ? [workspace] : [];
   if (path === "/") return PANES.map((pane) => pane.id);
   return PANES
     .filter((pane) => path === pane.agentPath || path === pane.stylePath)
@@ -196,7 +197,7 @@ function ensureFrame() {
 
     const path = document.createElement("span");
     path.className = "dietsurf-pane-path";
-    path.textContent = pane.agentPath;
+    path.textContent = `${pane.id}:${pane.agentPath}`;
 
     const state = document.createElement("span");
     state.className = "dietsurf-pane-state";
@@ -317,7 +318,7 @@ chrome.runtime.onMessage.addListener((message) => {
       for (const listener of stateFor(id).logListeners) listener(message.text);
     }
   } else if (message.type === "fileChanged") {
-    for (const id of paneForPath(message.path)) requestPaneReload(id);
+    for (const id of paneForPath(message.path, message.workspace)) requestPaneReload(id);
   }
   return false;
 });
@@ -418,7 +419,7 @@ function fallbackPane(pane, message) {
   input.autocomplete = "off";
   input.spellcheck = false;
   input.rows = 1;
-  input.placeholder = `rescue shell: cat ${pane.agentPath}, reset`;
+  input.placeholder = `rescue shell: cat ${pane.agentPath}, git status, reset`;
 
   root.append(output, status, input);
   app.append(root);
@@ -507,7 +508,7 @@ function fallbackPane(pane, message) {
   write(`${pane.title} rescue`);
   write(message);
   write("");
-  write(`Use \`cat ${pane.agentPath}\` to inspect, \`cat > ${pane.agentPath} <<'EOF'\` to repair, or \`reset\` to restore packaged defaults.`);
+  write(`Use \`cat ${pane.agentPath}\` to inspect, \`cat > ${pane.agentPath} <<'EOF'\` to repair Staging, or \`reset\` to restore packaged defaults.`);
   input.focus();
 }
 
@@ -517,7 +518,7 @@ async function renderPane(pane) {
   setPaneStatus(pane.id, "loading", "loading");
 
   const { shadow, app, style } = ensurePaneRoot(pane);
-  style.textContent = await send({ type: "readFile", path: pane.stylePath }).catch(() => "");
+  style.textContent = await send({ type: "readFile", workspace: pane.id, path: pane.stylePath }).catch(() => "");
 
   const paneDocument = documentFor(shadow, app);
   const uiRuntime = {
@@ -529,9 +530,11 @@ async function renderPane(pane) {
     window,
     localStorage: window.localStorage,
     matchMedia: window.matchMedia.bind(window),
-    readFile: (path) => send({ type: "readFile", path }),
-    writeFile: (path, text) => runInPane(pane.id, () => send({ type: "writeFile", path, text })),
-    listFiles: (path = "/") => send({ type: "listFiles", path }),
+    Buffer,
+    global: { Buffer },
+    readFile: (path) => send({ type: "readFile", workspace: pane.id, path }),
+    writeFile: (path, text) => runInPane(pane.id, () => send({ type: "writeFile", workspace: pane.id, path, text })),
+    listFiles: (path = "/") => send({ type: "listFiles", workspace: pane.id, path }),
     shell: (command) => runInPane(pane.id, () => send({ type: "shell", workspace: pane.id, command })),
     interrupt: () => send({ type: "interrupt", workspace: pane.id }),
     onLog(listener) {

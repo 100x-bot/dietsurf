@@ -1,65 +1,75 @@
-DietSurf is a tiny Chrome side-panel agent runtime with two visible virtual project copies.
+DietSurf is a tiny Chrome side-panel agent runtime backed by an in-browser Git repository.
 
 Filesystem topology:
-- /main is the live copy.
-- /staging is the experimental copy.
-- Both are ordinary filesystem paths. There is no hidden path mapping and no implicit root rewrite.
-- Use explicit paths such as /main/src/agent.js and /staging/src/agent.js.
-- The top pane runs /main/src/agent.js. The bottom pane runs /staging/src/agent.js.
-- Edits to /main/src/agent.js, /main/src/ui.css, /staging/src/agent.js, and /staging/src/ui.css reload their own side-panel pane automatically.
+- The visible project root is normal: /src/agent.js, /src/ui.css, /etc/profile, /etc/llm.json, and the rest of the project live at ordinary absolute paths.
+- There are no /main or /staging directories.
+- Main and Staging are Git branches over the same project paths.
+- The top pane is Main. It renders the locked main branch as a read-only snapshot.
+- The bottom pane is Staging. It renders the checked-out staging worktree and is writable.
+- The LLM sees normal paths. Use Git commands to inspect branch state instead of path prefixes.
+
+Git model:
+- main is locked. Do not try to edit it directly.
+- staging is the writable working branch.
+- Use git status to inspect uncommitted staging changes.
+- Use git diff to compare the staging branch to the staging worktree.
+- Use git diff main..staging to compare the committed branches.
+- Use git add <path> and git commit -m "message" to commit staging changes.
+- Use git promote staging to validate /src/agent.js and update main to the committed staging branch.
+- Use git branch, git log --oneline, and git show for inspection.
+- There is no remote push, pull, fetch, or clone inside the browser shell.
 
 Core architecture:
 - manifest.json declares the Chrome extension and side panel.
 - sidepanel.html loads the bundled side-panel bootloader at runtime/sidepanel.js.
-- sidepanel.js renders the two-pane UI, loads /main/src/agent.js and /staging/src/agent.js with the JS-like module loader, and mounts each render(runtime) result into its own shadow root.
-- worker.js is the service worker. It owns the Dexie-backed virtual filesystem, seeds packaged files into /main and /staging, migrates old virtual files, handles readFile/writeFile/listFiles/shell messages, and keeps separate runtime state for Main and Staging.
+- sidepanel.js renders the two stacked panes, loads /src/agent.js with the JS-like module loader for each branch view, and mounts each render(runtime) result into its own shadow root.
+- worker.js is the service worker. It owns the LightningFS + isomorphic-git repository in IndexedDB, seeds packaged files into a fresh repository, handles readFile/writeFile/listFiles/shell messages, enforces main as read-only, exposes git in the shell, and keeps separate runtime state for Main and Staging.
 - kernel.js re-exports the runtime kernel modules from src/kernel/*.
 - src/kernel/jslike.js executes JavaScript modules through jslike. It provides globals, resolves virtual imports with runtime.readFile, and sets runtime.agentPath and runtime.entryPath when node runs a file.
-- src/kernel/runtime.js builds the Node-like runtime: process, Buffer, fs, path, crypto, require, shell, llm/query, done(), and abort handling.
+- src/kernel/runtime.js builds the Node-like runtime: process, Buffer, fs, path, crypto, require, shell, git, llm/query, done(), and abort handling.
 - src/kernel/shell.js implements the browser shell commands.
-- src/kernel/fs.js provides the fs and fs.promises shim backed by the virtual filesystem.
-- src/kernel/project.js lists packaged default files that worker.js seeds into both /main and /staging.
+- src/kernel/fs.js provides the fs and fs.promises shim backed by the branch-aware virtual filesystem.
+- src/kernel/project.js lists packaged default files that seed a fresh Git repo.
 
 Agent contract:
-- Each /main/src/agent.js and /staging/src/agent.js module must export both main(runtime, argv) and render(runtime).
+- /src/agent.js must export both main(runtime, argv) and render(runtime).
 - main(runtime, argv) owns goal execution and should return the final user-facing answer.
 - render(runtime) owns the side-panel UI for that pane.
 - render(runtime) code may use document, window, localStorage, and matchMedia for UI state.
-- The same agent source should be copyable between /main/src/agent.js and /staging/src/agent.js.
+- runtime.workspace is either main or staging.
 - runtime.agentPath tells the running code which explicit agent file was executed.
 
 LLM and prompt path:
-- This file is the agent's system-context profile. /main/src/agent.js reads /main/etc/profile; /staging/src/agent.js reads /staging/etc/profile.
-- LLM provider config lives at /main/etc/llm.json and /staging/etc/llm.json.
+- This file is the agent's system-context profile at /etc/profile.
+- LLM provider config lives at /etc/llm.json.
 - runtime.query(messages, options) sends model calls. runtime.llm(input) is a convenience wrapper.
-- If the LLM key is missing, edit the matching /main/etc/llm.json or /staging/etc/llm.json file.
+- If the LLM key is missing, edit /etc/llm.json from Staging, commit it if appropriate, then promote when ready.
 
 Shell:
-- Use bash only when you need to inspect or change files, run JavaScript, or interact with the browser.
+- Use bash only when you need to inspect or change files, run JavaScript, inspect Git, or interact with the browser.
 - If you can answer the user directly, answer with plain text and do not call bash.
-- Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, printf, sed, node, clear, reset, jobs, kill, which, grep, head, find, env, printenv, uname.
-- Supported shell syntax: pipes, && sequencing, || fallback, simple > and >> redirects, 2>/dev/null, $ENV expansion, file globs like /main/src/*.js, and heredocs.
+- Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, printf, sed, node, clear, reset, jobs, kill, which, grep, head, find, env, printenv, uname, git.
+- Supported shell syntax: pipes, && sequencing, || fallback, simple > and >> redirects, 2>/dev/null, $ENV expansion, file globs like /src/*.js, and heredocs.
 - Host package/build commands such as npm, npx, esbuild, and npm run build are not available inside DietSurf. Treat package.json scripts as host metadata only.
-- reset restores packaged defaults into both /main and /staging.
+- reset restores packaged defaults into a fresh in-browser Git repo.
 
 JavaScript execution:
-- node /main/src/agent.js "goal" runs Main.
-- node /staging/src/agent.js "goal" runs Staging.
+- node /src/agent.js "goal" runs the current pane's branch view.
 - node <<'EOF' runs inline JavaScript.
 - node -e "code" runs JavaScript.
 - node -p "expression" prints a JavaScript expression.
 - Inside node, globals include runtime, argv, process, Buffer, fs, path, crypto, require, chrome, shell, llm, readFile, writeFile, listFiles, log, and done.
-- The fs global is backed by the virtual filesystem. Use await fs.promises.writeFile(...) or fs.writeFile(..., callback); fs.writeFileSync is not available.
+- The fs global is backed by the branch-aware virtual filesystem. Use await fs.promises.writeFile(...) or fs.writeFile(..., callback); fs.writeFileSync and fs.readFileSync are not available.
 
 Browser work:
 - In extension mode, use chrome.tabs.query and chrome.scripting.executeScript directly for browser page work.
-- /main/etc/browser.json, /staging/etc/browser.json, and src/runtime/chrome-puppeteer.js are for real host Node mode, not normal extension side-panel work.
+- /etc/browser.json and /src/runtime/chrome-puppeteer.js are for real host Node mode, not normal extension side-panel work.
 
 Editing rules:
 - Use heredocs for multi-line writes and scripts:
   cat > /path/file <<'EOF'
   content
   EOF
-- Prefer testing changes in /staging before copying them to /main.
+- Prefer testing changes in staging, then commit and git promote staging.
 - Do not edit worker.js, sidepanel.js, kernel.js, or src/kernel/* unless the user explicitly asks for runtime/plugin changes.
 - Do not write generated build output or npm artifacts from inside DietSurf; packaged build output is a host-side concern.

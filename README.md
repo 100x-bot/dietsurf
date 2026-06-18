@@ -4,10 +4,11 @@ DietSurf is a minimal Chrome side-panel browser agent. It gives the agent and th
 user one shared shell, one editable virtual filesystem, and small editable agent
 loops instead of a separate workflow UI.
 
-The extension seeds its editable project files into IndexedDB, then runs
-`/main/src/agent.js` and `/staging/src/agent.js` through the DietSurf kernel.
-After first load, the virtual files inside the extension are the live source of
-truth; the packaged files are reset material and defaults.
+The extension seeds its editable project files into a LightningFS-backed Git
+repository in IndexedDB, then runs `/src/agent.js` through the DietSurf kernel
+for both panes. Main is a locked branch snapshot. Staging is the writable
+worktree. After first load, the in-browser Git repo is the live source of truth;
+the packaged files are reset material and defaults.
 
 ## What It Does
 
@@ -15,11 +16,13 @@ truth; the packaged files are reset material and defaults.
   vertically.
 - Runs direct shell commands such as `ls`, `cat`, `grep`, `node`, `sed`, and
   heredoc writes.
-- Treats non-shell input as a goal and routes it through that pane's explicit
-  agent path: `/main/src/agent.js` or `/staging/src/agent.js`.
+- Exposes an in-browser `git` command for status, diffs, staging, commits, logs,
+  and promoting Staging into Main.
+- Treats non-shell input as a goal and routes it through `/src/agent.js` in that
+  pane's branch view.
 - Lets the agent inspect and edit the same virtual project files the user sees.
-- Seeds literal `/main/**` and `/staging/**` project copies. These are normal
-  visible filesystem paths, not aliases.
+- Keeps visible paths normal. There are no `/main/**` or `/staging/**`
+  directories.
 - Builds a loadable unpacked extension under `build/unpacked`.
 
 ## Quick Start
@@ -43,8 +46,20 @@ build/unpacked
 ```
 
 For extension-mode LLM calls, set the API key inside the virtual
-`/main/etc/llm.json` and `/staging/etc/llm.json` files from the side-panel
-shell. For local Node mode, `.env` can provide `LILAC_API_KEY`.
+`/etc/llm.json` file from the Staging side-panel shell, then commit/promote if
+you want Main to use it. For local Node mode, `.env` can provide
+`LILAC_API_KEY`.
+
+Inside DietSurf, use:
+
+```sh
+git status
+git diff
+git diff main..staging
+git add /src/agent.js
+git commit -m "Update agent"
+git promote staging
+```
 
 ## Useful Commands
 
@@ -63,9 +78,9 @@ older root-level `dist/` output is intentionally not used.
 
 ```text
 manifest.json             Chrome extension manifest
-worker.js                 service-worker bootloader and virtual filesystem
+worker.js                 service-worker bootloader and browser Git filesystem
 sidepanel.js              side-panel bootloader
-src/agent.js              editable default agent and UI source seeded into both panes
+src/agent.js              editable default agent and UI source
 src/kernel/*              shell, runtime, JS-like module execution, VFS helpers
 etc/profile               runtime instructions exposed to the agent
 scripts/build-unpacked.mjs builds the loadable unpacked extension

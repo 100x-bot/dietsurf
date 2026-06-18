@@ -52,6 +52,7 @@ export function createRuntime(base) {
     removeFile: base.removeFile,
     resetProject: base.resetProject,
     clearHistory: base.clearHistory,
+    git: base.git,
     abortSignal: base.abortSignal,
     workspace: base.workspace,
     llmConfigPath: base.llmConfigPath || "/etc/llm.json",

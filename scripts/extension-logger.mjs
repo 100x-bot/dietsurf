@@ -127,21 +127,25 @@ await attachPage(page, "sidepanel");
 await page.goto(`chrome-extension://${extensionId}/sidepanel.html`, { waitUntil: "networkidle0" });
 await page.waitForSelector("#dietsurf-main-host");
 if (process.env.LILAC_API_KEY) {
-  const response = await page.evaluate((apiKey) => Promise.all(["main", "staging"].map((workspace) => (
-    chrome.runtime.sendMessage({
-      type: "writeFile",
-      path: `/${workspace}/etc/llm.json`,
-      text: JSON.stringify({
-        baseUrl: "https://api.getlilac.com/v1",
-        apiKey,
-        apiKeyEnv: "LILAC_API_KEY",
-        model: "minimaxai/minimax-m2.7"
-      }, null, 2)
-    })
-  ))), process.env.LILAC_API_KEY);
-  const failed = response.find((item) => !item?.ok);
-  if (failed) throw new Error(failed?.error || "failed to seed llm config");
-  console.log("seeded /main/etc/llm.json and /staging/etc/llm.json from LILAC_API_KEY");
+  const response = await page.evaluate((apiKey) => chrome.runtime.sendMessage({
+    type: "writeFile",
+    workspace: "staging",
+    path: "/etc/llm.json",
+    text: JSON.stringify({
+      baseUrl: "https://api.getlilac.com/v1",
+      apiKey,
+      apiKeyEnv: "LILAC_API_KEY",
+      model: "minimaxai/minimax-m2.7"
+    }, null, 2)
+  }), process.env.LILAC_API_KEY);
+  if (!response?.ok) throw new Error(response?.error || "failed to seed llm config");
+  const promote = await page.evaluate(() => chrome.runtime.sendMessage({
+    type: "shell",
+    workspace: "staging",
+    command: 'git add /etc/llm.json && git commit -m "Configure LLM" && git promote staging'
+  }));
+  if (!promote?.ok) throw new Error(promote?.error || "failed to promote llm config");
+  console.log("seeded /etc/llm.json in staging and promoted it to main from LILAC_API_KEY");
 }
 
 console.log(`extension: chrome-extension://${extensionId}/sidepanel.html`);

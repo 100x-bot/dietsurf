@@ -1,13 +1,21 @@
-import Dexie from "dexie";
-import { PROJECT_FILES, createRuntime, toErrorText } from "./kernel.js";
+import git from "isomorphic-git";
+import LightningFS from "@isomorphic-git/lightning-fs";
+import { Buffer } from "buffer";
+import { createTwoFilesPatch } from "diff";
+import { PROJECT_FILES, absPath, createRuntime, loadModule, toErrorText } from "./kernel.js";
 
-const STORE = "dietsurf.files";
+const FS_NAME = "dietsurf-git";
+const REPO_DIR = "/repo";
 const WORKSPACES = ["main", "staging"];
-const db = new Dexie("dietsurf");
-db.version(1).stores({ files: "path" });
-const fileCache = new Map();
+const AUTHOR = { name: "DietSurf", email: "agent@dietsurf.local" };
+
+const fs = new LightningFS(FS_NAME);
+const pfs = fs.promises;
 const activeRuns = new Map();
 const runtimePromises = new Map();
+let repoPromise;
+
+if (!globalThis.Buffer) globalThis.Buffer = Buffer;
 
 function enableActionSidePanel() {
   if (!chrome.sidePanel?.setPanelBehavior) return;
@@ -27,70 +35,59 @@ function logToPanel(workspace, ...args) {
     .catch(() => undefined);
 }
 
-function notifyFileChanged(path) {
-  chrome.runtime.sendMessage({ type: "fileChanged", path })
+function notifyFileChanged(path, workspace) {
+  chrome.runtime.sendMessage({ type: "fileChanged", path, workspace })
     .catch(() => undefined);
 }
 
-async function allFiles() {
-  const rows = await db.files.toArray();
-  return Object.fromEntries(rows.map((row) => [row.path, row.text]));
-}
-
-async function hydrateFileCache() {
-  fileCache.clear();
-  for (const row of await db.files.toArray()) fileCache.set(row.path, row.text);
-}
-
-async function readFile(path) {
-  const file = await db.files.get(path);
-  if (!file) throw new Error(`no such file: ${path}`);
-  return file.text;
-}
-
-function readFileSync(path) {
-  if (!fileCache.has(path)) throw new Error(`no such file: ${path}`);
-  return fileCache.get(path);
-}
-
-async function writeFile(path, text) {
-  const value = String(text);
-  await db.files.put({ path, text: value });
-  fileCache.set(path, value);
-  notifyFileChanged(path);
-}
-
-async function listFiles(path = "/") {
-  const files = await allFiles();
-  const prefix = path === "/" ? "/" : `${path.replace(/\/$/, "")}/`;
-  return Object.keys(files).filter((file) => file === path || file.startsWith(prefix));
-}
-
-async function removeFile(path) {
-  await db.files.delete(path);
-  fileCache.delete(path);
-  notifyFileChanged(path);
-}
-
-async function migrateChromeStorage() {
-  const data = await chrome.storage.local.get(STORE);
-  const files = data[STORE] || {};
-  const paths = Object.keys(files);
-  if (!paths.length) return;
-  await db.files.bulkPut(paths.map((path) => ({ path, text: String(files[path]) })));
-  await chrome.storage.local.remove(STORE);
-}
-
-function workspacePath(workspace, path) {
-  return `/${workspace}${path}`;
-}
-
-function workspaceText(workspace, path, text) {
-  return String(text);
-}
-
 function workspaceOf(value) {
-  return WORKSPACES.includes(value) ? value : "main";
+  return WORKSPACES.includes(value) ? value : "staging";
+}
+
+function notFound(error) {
+  return error?.code === "ENOENT" || error?.name === "NotFoundError" || /not found|no such/i.test(String(error?.message || error));
+}
+
+function cleanPath(path) {
+  const clean = absPath(String(path || "/"), "/");
+  if (clean === "/.git" || clean.startsWith("/.git/")) throw new Error(".git is internal");
+  return clean;
+}
+
+function repoRel(path) {
+  return cleanPath(path).replace(/^\//, "");
+}
+
+function diskPath(path) {
+  const clean = cleanPath(path);
+  return clean === "/" ? REPO_DIR : `${REPO_DIR}${clean}`;
+}
+
+async function mkdirp(dir) {
+  const clean = absPath(dir || "/", "/");
+  if (clean === "/") return;
+  let current = "";
+  for (const part of clean.split("/").filter(Boolean)) {
+    current += `/${part}`;
+    try {
+      await pfs.mkdir(current);
+    } catch (error) {
+      if (!notFound(error) && error?.code !== "EEXIST" && !/exists/i.test(String(error?.message || error))) throw error;
+    }
+  }
+}
+
+async function ensureParent(path) {
+  const clean = absPath(path, "/");
+  const slash = clean.lastIndexOf("/");
+  await mkdirp(slash <= 0 ? "/" : clean.slice(0, slash));
+}
+
+function decode(value) {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
+  if (value instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(value));
+  return String(value ?? "");
 }
 
 async function packagedSourceFiles() {
@@ -103,183 +100,165 @@ async function packagedSourceFiles() {
   return files;
 }
 
-async function packagedFiles() {
-  const files = [];
-  for (const file of await packagedSourceFiles()) {
-    for (const workspace of WORKSPACES) {
-      files.push({
-        path: workspacePath(workspace, file.path),
-        text: workspaceText(workspace, file.path, file.text)
-      });
+async function worktreeRelFiles(root = "") {
+  const relRoot = root.replace(/^\/+/, "").replace(/\/+$/, "");
+  const start = relRoot ? `${REPO_DIR}/${relRoot}` : REPO_DIR;
+  const out = [];
+
+  async function walk(fullPath, rel) {
+    let stat;
+    try {
+      stat = await pfs.stat(fullPath);
+    } catch (error) {
+      if (notFound(error)) return;
+      throw error;
+    }
+    if (stat.isFile()) {
+      out.push(rel);
+      return;
+    }
+    if (!stat.isDirectory()) return;
+    const names = await pfs.readdir(fullPath);
+    for (const name of names.sort()) {
+      if (!rel && name === ".git") continue;
+      const nextRel = rel ? `${rel}/${name}` : name;
+      await walk(`${fullPath}/${name}`, nextRel);
     }
   }
-  return files;
+
+  await walk(start, relRoot);
+  return out.filter(Boolean).sort();
+}
+
+async function readWorktreeFile(path) {
+  try {
+    return decode(await pfs.readFile(diskPath(path), "utf8"));
+  } catch (error) {
+    if (notFound(error)) throw new Error(`no such file: ${cleanPath(path)}`);
+    throw error;
+  }
+}
+
+async function writeWorktreeFile(path, text) {
+  const target = diskPath(path);
+  await ensureParent(target);
+  await pfs.writeFile(target, String(text), "utf8");
+}
+
+async function removeWorktreeFile(path) {
+  try {
+    await pfs.unlink(diskPath(path));
+  } catch (error) {
+    if (notFound(error)) throw new Error(`no such file: ${cleanPath(path)}`);
+    throw error;
+  }
+}
+
+async function readBranchFile(ref, path) {
+  const filepath = repoRel(path);
+  if (!filepath) throw new Error(`not a file: ${cleanPath(path)}`);
+  try {
+    const oid = await git.resolveRef({ fs, dir: REPO_DIR, ref });
+    const { blob } = await git.readBlob({ fs, dir: REPO_DIR, oid, filepath });
+    return decode(blob);
+  } catch (error) {
+    if (notFound(error)) throw new Error(`no such file: ${cleanPath(path)}`);
+    throw error;
+  }
+}
+
+async function readBranchMap(ref) {
+  const paths = await git.listFiles({ fs, dir: REPO_DIR, ref });
+  const out = new Map();
+  for (const filepath of paths.sort()) out.set(filepath, await readBranchFile(ref, `/${filepath}`));
+  return out;
+}
+
+async function readWorktreeMap() {
+  const out = new Map();
+  for (const filepath of await worktreeRelFiles()) out.set(filepath, await readWorktreeFile(`/${filepath}`));
+  return out;
+}
+
+async function hasRepo() {
+  try {
+    await git.resolveRef({ fs, dir: REPO_DIR, ref: "refs/heads/staging" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function seedFreshRepo({ wipe = false } = {}) {
+  if (wipe || !(await hasRepo())) {
+    await fs.init(FS_NAME, { wipe: true });
+    await mkdirp(REPO_DIR);
+    await git.init({ fs, dir: REPO_DIR, defaultBranch: "main" });
+
+    for (const file of await packagedSourceFiles()) await writeWorktreeFile(file.path, file.text);
+    for (const filepath of await worktreeRelFiles()) await git.add({ fs, dir: REPO_DIR, filepath });
+    await git.commit({ fs, dir: REPO_DIR, author: AUTHOR, committer: AUTHOR, message: "Seed packaged project" });
+    await git.branch({ fs, dir: REPO_DIR, ref: "staging", checkout: true });
+    return;
+  }
+
+  const current = await git.currentBranch({ fs, dir: REPO_DIR, fullname: false }).catch(() => "");
+  if (current !== "staging") await git.checkout({ fs, dir: REPO_DIR, ref: "staging" });
+}
+
+async function ensureRepo() {
+  if (!repoPromise) {
+    repoPromise = seedFreshRepo().catch((error) => {
+      repoPromise = undefined;
+      throw error;
+    });
+  }
+  return repoPromise;
 }
 
 async function resetProject() {
-  const files = await packagedFiles();
-  await db.files.clear();
-  await db.files.bulkPut(files);
-  fileCache.clear();
-  for (const file of files) fileCache.set(file.path, file.text);
-  runtimePromises?.clear?.();
+  repoPromise = seedFreshRepo({ wipe: true });
+  await repoPromise;
+  runtimePromises.clear();
   notifyFileChanged("/");
 }
 
-async function seedMissingFiles() {
-  const files = [];
-  for (const file of await packagedFiles()) {
-    if (await db.files.get(file.path)) continue;
-    files.push(file);
-  }
-  if (files.length) await db.files.bulkPut(files);
-  for (const file of files) fileCache.set(file.path, file.text);
-}
-
-async function removeLegacyRootFiles() {
-  const paths = (await db.files.toArray())
-    .map((row) => row.path)
-    .filter((path) => !WORKSPACES.some((workspace) => path === `/${workspace}` || path.startsWith(`/${workspace}/`)));
-  if (!paths.length) return;
-  await db.files.bulkDelete(paths);
-  for (const path of paths) fileCache.delete(path);
-}
-
-async function upgradeDefaultFile(workspace, sourcePath, shouldReplace) {
-  const path = workspacePath(workspace, sourcePath);
-  const current = await db.files.get(path);
-  if (!current) return;
-  const response = await fetch(chrome.runtime.getURL(sourcePath.slice(1)));
-  if (!response.ok) return;
-  const packaged = await response.text();
-  if (!shouldReplace(current.text, packaged)) return;
-  await writeFile(path, workspaceText(workspace, sourcePath, packaged));
-}
-
-function readJson(text) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return {};
-  }
-}
-
-async function upgradeDefaultFiles() {
-  for (const workspace of WORKSPACES) await upgradeWorkspaceDefaultFiles(workspace);
-}
-
-async function upgradeWorkspaceDefaultFiles(workspace) {
-  await upgradeDefaultFile(workspace, "/etc/profile", (text) => (
-    text.trim() === "# DietSurf profile"
-  ) || (
-    text.includes("DietSurf is a tiny shell over a virtual project.") &&
-    !text.includes("Host package/build commands such as npm")
-  ) || (
-    !text.includes("Core architecture:") ||
-    !text.includes("Agent contract:") ||
-    !text.includes("LLM and prompt path:")
-  ));
-  await upgradeDefaultFile(workspace, "/manifest.json", (text) => (
-    text.includes('"service_worker": "dist/worker.js"')
-  ));
-  await upgradeDefaultFile(workspace, "/etc/llm.json", (text, packaged) => {
-    const current = readJson(text);
-    const next = readJson(packaged);
-    return !current.apiKey && Boolean(next.apiKey);
-  });
-  await upgradeDefaultFile(workspace, "/sidepanel.html", (text) => (
-    text.includes('src="dist/sidepanel.js"')
-  ));
-  await upgradeDefaultFile(workspace, "/package.json", (text) => (
-    text.includes("--outdir=dist")
-  ));
-  await upgradeDefaultFile(workspace, "/kernel.js", (text) => (
-    text.includes("./src/kernel/monetize.js")
-  ));
-  await upgradeDefaultFile(workspace, "/sidepanel.js", (text) => (
-    text.includes("interrupt: () => undefined")
-  ) || (
-    text.includes('throw new Error((response?.error || "worker error").split("\\n")[0]);')
-  ) || (
-    !text.includes("/main/src/agent.js") ||
-    !text.includes("/staging/src/agent.js")
-  ));
-  await upgradeDefaultFile(workspace, "/worker.js", (text) => (
-    text.includes('"service_worker": "dist/worker.js"')
-  ) || (
-    text.includes('await upgradeDefaultFile("/etc/profile"') &&
-    !text.includes('await upgradeDefaultFile("/sidepanel.html"')
-  ));
-  await upgradeDefaultFile(workspace, "/src/agent.js", (text) => (
-    !text.includes("export async function main") ||
-    !text.includes("export function render")
-  ) || (
-    text.includes('const WORKSPACE = "/main";')
-  ) || (
-    text.includes('const WORKSPACE = "/staging";')
-  ) || (
-    text.includes('input.placeholder = "node /src/agent.js \\"goal\\""') &&
-    text.includes("const result = await shell(command);")
-  ) || (
-    text.includes('input.placeholder = "goal or shell command"') &&
-    text.includes("const result = await shell(toShell(command));") &&
-    !text.includes("dietsurf-status")
-  ) || (
-    text.includes("Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, node, reset, jobs, kill.") &&
-    text.includes('const shellCommands = new Set(["cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo", "node", "reset", "jobs", "kill"]);')
-  ) || (
-    text.includes("const clearScreen = () =>") &&
-    !text.includes('await shell("clear")')
-  ) || (
-    text.includes("const history = []") &&
-    text.includes("JSON.stringify(history)")
-  ) || (
-    text.includes("Return exactly one bash tool call per step.")
-  ) || (
-    text.includes("Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, node, clear, reset, jobs, kill.") &&
-    text.includes("If you can answer the user directly")
-  ) || (
-    text.includes("Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, node, clear, reset, jobs, kill, which, grep, head, find.") &&
-    !text.includes("/etc/browser.json and /src/runtime/chrome-puppeteer.js are only for running the same agent from real host Node")
-  ) || (
-    text.includes('input.placeholder = "goal or shell command"') &&
-    text.includes('write("DietSurf")') &&
-    !text.includes("interruptRun")
-  ) || (
-    text.includes('"You are helpful executive agent"')
-  ) || (
-    text.includes("Use cat > file <<'EOF' ... EOF to write files.")
-  ) || (
-    text.includes("Use fs.promises for Node-style file operations; it is backed by the virtual filesystem.")
-  ));
-  await upgradeDefaultFile(workspace, "/src/ui.css", (text) => (
-    text.includes("height: 100dvh")
-  ) || (
-    text.includes("#35f06b") &&
-    !text.includes("var(--dietsurf-accent")
-  ) || (
-    text.includes("#dietsurf-prompt:focus") &&
-    !text.includes("#dietsurf-status")
-  ) || (
-    text.includes("grid-template-rows: 1fr auto auto") &&
-    !text.includes("height: 100dvh")
-  ) || (
-    text.includes('#dietsurf-status[data-state="error"]') &&
-    !text.includes('#dietsurf-status[data-state="aborted"]')
-  ));
-}
-
 async function seedFiles() {
-  await migrateChromeStorage();
-  if (!(await db.files.get("/main/src/agent.js")) || !(await db.files.get("/staging/src/agent.js"))) {
-    await resetProject();
-    return;
+  await ensureRepo();
+}
+
+async function readFile(path, workspace = "staging") {
+  await ensureRepo();
+  return workspaceOf(workspace) === "main" ? readBranchFile("main", path) : readWorktreeFile(path);
+}
+
+async function writeFile(path, text, workspace = "staging") {
+  await ensureRepo();
+  if (workspaceOf(workspace) === "main") throw new Error("main branch is locked; edit staging and promote it");
+  await writeWorktreeFile(path, text);
+  notifyFileChanged(cleanPath(path), "staging");
+}
+
+async function listFiles(path = "/", workspace = "staging") {
+  await ensureRepo();
+  const clean = cleanPath(path);
+  if (workspaceOf(workspace) === "main") {
+    const rel = repoRel(clean);
+    const prefix = rel ? `${rel}/` : "";
+    return (await git.listFiles({ fs, dir: REPO_DIR, ref: "main" }))
+      .filter((file) => file === rel || file.startsWith(prefix))
+      .map((file) => `/${file}`)
+      .sort();
   }
-  await hydrateFileCache();
-  await seedMissingFiles();
-  await removeLegacyRootFiles();
-  await upgradeDefaultFiles();
-  await hydrateFileCache();
+  const rels = await worktreeRelFiles(repoRel(clean));
+  return rels.map((file) => `/${file}`).sort();
+}
+
+async function removeFile(path, workspace = "staging") {
+  await ensureRepo();
+  if (workspaceOf(workspace) === "main") throw new Error("main branch is locked; edit staging and promote it");
+  await removeWorktreeFile(path);
+  notifyFileChanged(cleanPath(path), "staging");
 }
 
 function chromeFacade() {
@@ -335,21 +314,219 @@ function chromeFacade() {
   };
 }
 
+function isCleanStatusRow([, head, workdir, stage]) {
+  return head === 1 && workdir === 1 && stage === 1;
+}
+
+async function statusRows() {
+  return (await git.statusMatrix({ fs, dir: REPO_DIR }))
+    .filter((row) => !isCleanStatusRow(row))
+    .sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function statusCode([, head, workdir, stage]) {
+  if (head === 0 && workdir !== 0) return stage === 0 ? "??" : "A ";
+  if (head !== 0 && workdir === 0) return stage === 0 ? "D " : " D";
+  const staged = head !== stage;
+  const unstaged = workdir !== stage;
+  if (staged || unstaged) return `${staged ? "M" : " "}${unstaged ? "M" : " "}`;
+  return "??";
+}
+
+function formatStatus(rows) {
+  if (!rows.length) return "On branch staging\nnothing to commit, working tree clean";
+  return [
+    "On branch staging",
+    "Changes:",
+    ...rows.map((row) => `${statusCode(row)} ${row[0]}`)
+  ].join("\n");
+}
+
+async function stageFilepath(filepath) {
+  try {
+    await pfs.stat(`${REPO_DIR}/${filepath}`);
+    await git.add({ fs, dir: REPO_DIR, filepath });
+  } catch (error) {
+    if (!notFound(error)) throw error;
+    await git.remove({ fs, dir: REPO_DIR, filepath });
+  }
+}
+
+async function gitAdd(args, cwd) {
+  if (!args.length) throw new Error("git add requires a path");
+  const matrix = await git.statusMatrix({ fs, dir: REPO_DIR });
+  const staged = new Set();
+
+  for (const arg of args) {
+    const target = repoRel(absPath(arg, cwd || "/"));
+    const matches = !target
+      ? matrix
+      : matrix.filter(([filepath]) => filepath === target || filepath.startsWith(`${target}/`));
+    if (!matches.length && target) matches.push([target]);
+    for (const [filepath] of matches) {
+      if (!filepath || staged.has(filepath)) continue;
+      await stageFilepath(filepath);
+      staged.add(filepath);
+    }
+  }
+
+  return staged.size ? `staged ${staged.size} path${staged.size === 1 ? "" : "s"}` : "nothing to stage";
+}
+
+function parseCommitMessage(args) {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-m") return args[i + 1] || "";
+    if (args[i].startsWith("-m") && args[i].length > 2) return args[i].slice(2);
+  }
+  return "";
+}
+
+async function gitCommit(args) {
+  const message = parseCommitMessage(args).trim();
+  if (!message) throw new Error('git commit requires -m "message"');
+  const rows = await git.statusMatrix({ fs, dir: REPO_DIR });
+  if (!rows.some(([, head, , stage]) => head !== stage)) return "nothing staged for commit";
+  const oid = await git.commit({ fs, dir: REPO_DIR, author: AUTHOR, committer: AUTHOR, message });
+  notifyFileChanged("/", "staging");
+  return `[staging ${oid.slice(0, 7)}] ${message}`;
+}
+
+async function gitLog(args, workspace) {
+  const oneline = args.includes("--oneline");
+  const ref = workspaceOf(workspace) === "main" ? "main" : "staging";
+  const commits = await git.log({ fs, dir: REPO_DIR, ref, depth: 24 });
+  if (oneline) return commits.map(({ oid, commit }) => `${oid.slice(0, 7)} ${commit.message.split("\n")[0]}`).join("\n");
+  return commits.map(({ oid, commit }) => [
+    `commit ${oid}`,
+    `Author: ${commit.author.name} <${commit.author.email}>`,
+    "",
+    `    ${commit.message.replace(/\n/g, "\n    ")}`
+  ].join("\n")).join("\n\n");
+}
+
+async function gitShow(args, workspace) {
+  const ref = args.find((arg) => !arg.startsWith("-")) || (workspaceOf(workspace) === "main" ? "main" : "staging");
+  const [entry] = await git.log({ fs, dir: REPO_DIR, ref, depth: 1 });
+  if (!entry) throw new Error(`unknown ref: ${ref}`);
+  return [
+    `commit ${entry.oid}`,
+    `Author: ${entry.commit.author.name} <${entry.commit.author.email}>`,
+    "",
+    `    ${entry.commit.message.replace(/\n/g, "\n    ")}`
+  ].join("\n");
+}
+
+function diffMaps(oldMap, newMap, oldLabel, newLabel) {
+  const paths = [...new Set([...oldMap.keys(), ...newMap.keys()])].sort();
+  const patches = [];
+  for (const filepath of paths) {
+    const oldText = oldMap.get(filepath) ?? "";
+    const newText = newMap.get(filepath) ?? "";
+    if (oldText === newText) continue;
+    patches.push(createTwoFilesPatch(
+      oldMap.has(filepath) ? `${oldLabel}/${filepath}` : "/dev/null",
+      newMap.has(filepath) ? `${newLabel}/${filepath}` : "/dev/null",
+      oldText,
+      newText,
+      "",
+      ""
+    ).trimEnd());
+  }
+  return patches.join("\n");
+}
+
+async function gitDiff(args) {
+  const range = args.find((arg) => !arg.startsWith("-"));
+  if (range === "main..staging") {
+    return diffMaps(await readBranchMap("main"), await readBranchMap("staging"), "main", "staging") || "";
+  }
+  if (range === "staging..main") {
+    return diffMaps(await readBranchMap("staging"), await readBranchMap("main"), "staging", "main") || "";
+  }
+  if (range) throw new Error(`unsupported git diff range: ${range}`);
+  return diffMaps(await readBranchMap("staging"), await readWorktreeMap(), "staging", "worktree") || "";
+}
+
+async function validateStagingAgent() {
+  const validationRuntime = {
+    workspace: "staging",
+    agentPath: "/src/agent.js",
+    entryPath: "/src/agent.js",
+    readFile: (path) => readFile(path, "staging"),
+    listFiles: (path = "/") => listFiles(path, "staging"),
+    localStorage: {
+      getItem: () => null,
+      setItem: () => undefined,
+      removeItem: () => undefined
+    },
+    log: () => undefined
+  };
+  const mod = await loadModule(validationRuntime, "/src/agent.js");
+  if (!mod || typeof mod.main !== "function" || typeof mod.render !== "function") {
+    throw new Error("/src/agent.js must export main(runtime, argv) and render(runtime)");
+  }
+}
+
+async function gitPromote(args) {
+  if (args[0] !== "staging") throw new Error("usage: git promote staging");
+  const rows = await statusRows();
+  if (rows.length) throw new Error("staging has uncommitted changes; git add and git commit first");
+  await validateStagingAgent();
+  const oid = await git.resolveRef({ fs, dir: REPO_DIR, ref: "refs/heads/staging" });
+  await git.writeRef({ fs, dir: REPO_DIR, ref: "refs/heads/main", value: oid, force: true });
+  notifyFileChanged("/", "main");
+  return `promoted staging ${oid.slice(0, 7)} to main`;
+}
+
+async function gitCommand(argv, { workspace = "staging", cwd = "/" } = {}) {
+  await ensureRepo();
+  const command = argv[0] || "status";
+  const args = argv.slice(1);
+  const key = workspaceOf(workspace);
+
+  if (command === "status") {
+    if (key === "main") return "On branch main\nmain is locked\nnothing to commit, working tree clean";
+    return formatStatus(await statusRows());
+  }
+  if (command === "branch") {
+    const branches = await git.listBranches({ fs, dir: REPO_DIR });
+    return branches.sort().map((branch) => {
+      const active = key === branch ? "*" : " ";
+      const suffix = branch === "main" ? " (locked)" : "";
+      return `${active} ${branch}${suffix}`;
+    }).join("\n");
+  }
+  if (command === "checkout") {
+    const ref = args[0];
+    if (ref === "staging") return "already using staging worktree";
+    if (ref === "main") throw new Error("main is locked; inspect it in the Main pane or promote staging");
+    throw new Error("only staging can be checked out");
+  }
+  if (command === "diff") return gitDiff(args);
+  if (command === "log") return gitLog(args, key);
+  if (command === "show") return gitShow(args, key);
+  if (key === "main") throw new Error("main branch is locked; edit staging and promote it");
+  if (command === "add") return gitAdd(args, cwd);
+  if (command === "commit") return gitCommit(args);
+  if (command === "promote") return gitPromote(args);
+  throw new Error(`unknown git command: ${command}`);
+}
+
 async function runtime(workspace) {
-  await seedFiles();
+  await ensureRepo();
   const key = workspaceOf(workspace);
   if (!runtimePromises.has(key)) {
     runtimePromises.set(key, Promise.resolve(createRuntime({
       workspace: key,
-      llmConfigPath: `/${key}/etc/llm.json`,
+      llmConfigPath: "/etc/llm.json",
       chrome: chromeFacade(),
-      readFile,
-      readFileSync,
-      writeFile,
-      listFiles,
-      removeFile,
+      readFile: (path) => readFile(path, key),
+      writeFile: (path, text) => writeFile(path, text, key),
+      listFiles: (path = "/") => listFiles(path, key),
+      removeFile: (path) => removeFile(path, key),
       resetProject,
-      clearHistory: () => writeFile(`/${key}/var/log/history.jsonl`, ""),
+      clearHistory: () => undefined,
+      git: (argv, options = {}) => gitCommand(argv, { workspace: key, cwd: options.cwd || "/" }),
       log: (...args) => logToPanel(key, ...args)
     })));
   }
@@ -357,10 +534,8 @@ async function runtime(workspace) {
 }
 
 async function appendHistory(workspace, record) {
-  const line = JSON.stringify({ ts: new Date().toISOString(), ...record }) + "\n";
-  const path = `/${workspaceOf(workspace)}/var/log/history.jsonl`;
-  const prior = await readFile(path).catch(() => "");
-  await writeFile(path, prior + line);
+  void workspace;
+  void record;
 }
 
 chrome.runtime.onInstalled.addListener(() => {
@@ -401,12 +576,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (rt.abortSignal === controller.signal) rt.abortSignal = undefined;
       }
     }
-    if (message.type === "readFile") return { ok: true, result: await readFile(message.path) };
+    if (message.type === "readFile") return { ok: true, result: await readFile(message.path, workspace) };
     if (message.type === "writeFile") {
-      await writeFile(message.path, message.text);
+      await writeFile(message.path, message.text, workspace);
       return { ok: true, result: "" };
     }
-    if (message.type === "listFiles") return { ok: true, result: await listFiles(message.path || "/") };
+    if (message.type === "listFiles") return { ok: true, result: await listFiles(message.path || "/", workspace) };
     throw new Error(`unknown message: ${message.type}`);
   })().then(
     (response) => sendResponse(response),

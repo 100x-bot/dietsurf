@@ -76,7 +76,7 @@ function formatLs(paths, dir, recursive) {
 const BUILTIN_COMMANDS = new Set([
   "cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo",
   "printf", "sed", "node", "clear", "reset", "jobs", "kill", "which", "grep",
-  "head", "find", "env", "printenv", "uname"
+  "head", "find", "env", "printenv", "uname", "git"
 ]);
 
 function splitOperator(line, operator) {
@@ -331,6 +331,10 @@ export function createShell(runtime) {
     checkAbort();
     const cmd = argv[0];
     if (!cmd) return "";
+    if (cmd === "git") {
+      if (!runtime.git) throw new Error("git is not available");
+      return runtime.git(argv.slice(1), { cwd });
+    }
     if (cmd === "pwd") return cwd;
     if (cmd === "cd") {
       cwd = absPath(argv[1] || "/", cwd);

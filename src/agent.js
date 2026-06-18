@@ -191,7 +191,7 @@ export function render(runtime) {
     stopStatus("idle");
   };
 
-  const shellCommands = new Set(["cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo", "printf", "sed", "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find", "env", "printenv", "uname"]);
+  const shellCommands = new Set(["cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo", "printf", "sed", "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find", "env", "printenv", "uname", "git"]);
   const toShell = (value) => {
     const first = value.trim().split(/\s+/, 1)[0];
     if (value.includes("\n") || shellCommands.has(first)) return value;

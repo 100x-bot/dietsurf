@@ -65,27 +65,31 @@ try {
   await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`, { waitUntil: "networkidle0" });
   await panel.waitForSelector("#dietsurf-main-host", { timeout: 10000 });
 
-  const seed = await panel.evaluate((apiKey) => Promise.all(["main", "staging"].map((workspace) => (
-    chrome.runtime.sendMessage({
-      type: "writeFile",
-      path: `/${workspace}/etc/llm.json`,
-      text: JSON.stringify({
-        baseUrl: "https://api.getlilac.com/v1",
-        apiKey,
-        apiKeyEnv: "LILAC_API_KEY",
-        model: "minimaxai/minimax-m2.7"
-      }, null, 2)
-    })
-  ))), process.env.LILAC_API_KEY);
-  const failed = seed.find((item) => !item?.ok);
-  if (failed) throw new Error(failed?.error || "failed to seed llm config");
+  const seed = await panel.evaluate((apiKey) => chrome.runtime.sendMessage({
+    type: "writeFile",
+    workspace: "staging",
+    path: "/etc/llm.json",
+    text: JSON.stringify({
+      baseUrl: "https://api.getlilac.com/v1",
+      apiKey,
+      apiKeyEnv: "LILAC_API_KEY",
+      model: "minimaxai/minimax-m2.7"
+    }, null, 2)
+  }), process.env.LILAC_API_KEY);
+  if (!seed?.ok) throw new Error(seed?.error || "failed to seed llm config");
+  const promote = await panel.evaluate(() => chrome.runtime.sendMessage({
+    type: "shell",
+    workspace: "staging",
+    command: 'git add /etc/llm.json && git commit -m "Configure LLM" && git promote staging'
+  }));
+  if (!promote?.ok) throw new Error(promote?.error || "failed to promote llm config");
 
   await panel.bringToFront();
   const prompt = await panel.evaluateHandle(() => (
     document.querySelector("#dietsurf-main-host").shadowRoot.querySelector("#dietsurf-prompt")
   ));
   await prompt.click();
-  await panel.keyboard.type('node /main/src/agent.js "read the active tab title and return only the title"', { delay: 2 });
+  await panel.keyboard.type('node /src/agent.js "read the active tab title and return only the title"', { delay: 2 });
   await panel.keyboard.press("Enter");
   await target.bringToFront();
 
