@@ -6,6 +6,7 @@
   "scripts": {
     "build": "esbuild worker.js sidepanel.js --bundle --format=esm --target=chrome120 --outdir=dist",
     "build:plugin": "node scripts/build-plugin.mjs",
+    "test": "node scripts/kernel-smoke.mjs",
     "node": "node bin/dietsurf-node.js",
     "dev:extension": "node scripts/extension-logger.mjs",
     "e2e:real-user": "node scripts/e2e-real-user.mjs"

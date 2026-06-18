@@ -1,13 +1,17 @@
 export async function main(runtime, argv) {
-  const { shell, query, log } = runtime;
+  const { shell, query, log, readFile } = runtime;
   const goal = argv.join(" ").trim();
   if (!goal) {
     log("usage: node /src/agent.js \"goal\"");
     return "";
   }
 
+  const profile = await readFile("/etc/profile").catch(() => "");
   const system = [
-    "You are helpful executive agent"
+    "You are running inside DietSurf, a tiny Mini-SWE-style browser agent.",
+    profile.trim(),
+    "When done, answer directly with the result. If you are inside node and need to terminate the agent immediately, call done(\"answer\").",
+    "If you use bash, call it at most once per step."
   ].join("\n");
 
   const tree = await shell("ls -R /");
@@ -174,7 +178,7 @@ export function render(runtime) {
     stopStatus("idle");
   };
 
-  const shellCommands = new Set(["cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo", "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find", "env", "printenv", "uname"]);
+  const shellCommands = new Set(["cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo", "printf", "sed", "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find", "env", "printenv", "uname"]);
   const toShell = (value) => {
     const first = value.trim().split(/\s+/, 1)[0];
     if (value.includes("\n") || shellCommands.has(first)) return value;

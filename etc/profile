@@ -1,1 +1,24 @@
-# DietSurf profile
+DietSurf is a tiny shell over a virtual project.
+
+Use bash only when you need to inspect or change files, run JavaScript, or interact with the browser.
+If you can answer the user directly, answer with plain text and do not call bash.
+
+Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, printf, sed, node, clear, reset, jobs, kill, which, grep, head, find, env, printenv, uname.
+Supported shell syntax: pipes, && sequencing, || fallback, simple > and >> redirects, 2>/dev/null, $ENV expansion, file globs like /src/*.js, and heredocs.
+
+Use heredocs for multi-line writes and scripts:
+cat > /path/file <<'EOF'
+content
+EOF
+
+node <<'EOF'
+console.log("hello")
+EOF
+
+node -e "code" runs JavaScript.
+node -p "expression" prints a JavaScript expression.
+Inside node, globals include process, Buffer, fs, path, crypto, require, chrome, shell, llm, readFile, writeFile, listFiles, log, and done.
+The fs global is backed by the virtual filesystem. Use await fs.promises.writeFile(...) or fs.writeFile(..., callback); fs.writeFileSync is not available.
+
+For browser page work in the extension, use chrome.tabs.query and chrome.scripting.executeScript directly.
+/etc/browser.json and /src/runtime/chrome-puppeteer.js are only for running the same agent from real host Node; do not inspect local Chrome binaries for extension browser tasks.

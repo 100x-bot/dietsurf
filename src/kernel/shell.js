@@ -2,18 +2,61 @@ import { split } from "shlex";
 import { absPath, baseName, wildcardRegex } from "./path.js";
 import { runFile, runSource } from "./jslike.js";
 
+function findHeredoc(line) {
+  let quote = "";
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (quote) {
+      if (char === quote && line[i - 1] !== "\\") quote = "";
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char !== "<" || line[i + 1] !== "<") continue;
+
+    let j = i + 2;
+    while (/\s/.test(line[j] || "")) j++;
+    if (!line[j]) throw new Error("missing heredoc delimiter");
+
+    let delimiter = "";
+    if (line[j] === "'" || line[j] === '"') {
+      const delimQuote = line[j++];
+      const start = j;
+      while (j < line.length && !(line[j] === delimQuote && line[j - 1] !== "\\")) j++;
+      if (j >= line.length) throw new Error("unterminated heredoc delimiter");
+      delimiter = line.slice(start, j);
+      j++;
+    } else {
+      const start = j;
+      while (j < line.length && !/\s/.test(line[j])) j++;
+      delimiter = line.slice(start, j);
+    }
+    if (!delimiter) throw new Error("missing heredoc delimiter");
+
+    const before = line.slice(0, i).trim();
+    const after = line.slice(j).trim();
+    return {
+      head: [before, after].filter(Boolean).join(" "),
+      delimiter
+    };
+  }
+  return null;
+}
+
 function heredoc(lines, start) {
   const line = lines[start];
-  const match = line.match(/^(.*?)<<['"]?([A-Za-z0-9_.-]+)['"]?\s*$/);
+  const match = findHeredoc(line);
   if (!match) return null;
   const body = [];
   let i = start + 1;
   for (; i < lines.length; i++) {
-    if (lines[i] === match[2]) break;
+    if (lines[i] === match.delimiter) break;
     body.push(lines[i]);
   }
-  if (i >= lines.length) throw new Error(`unterminated heredoc ${match[2]}`);
-  return { head: match[1].trim(), body: body.join("\n"), next: i + 1 };
+  if (i >= lines.length) throw new Error(`unterminated heredoc ${match.delimiter}`);
+  return { head: match.head, body: body.join("\n"), next: i + 1 };
 }
 
 function formatLs(paths, dir, recursive) {
@@ -32,8 +75,8 @@ function formatLs(paths, dir, recursive) {
 
 const BUILTIN_COMMANDS = new Set([
   "cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo",
-  "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find",
-  "env", "printenv", "uname"
+  "printf", "sed", "node", "clear", "reset", "jobs", "kill", "which", "grep",
+  "head", "find", "env", "printenv", "uname"
 ]);
 
 function splitOperator(line, operator) {
@@ -96,6 +139,100 @@ function expandEnv(arg, env) {
     const key = bare || braced;
     return env[key] ?? "";
   });
+}
+
+function decodePrintf(value) {
+  return String(value).replace(/\\([nrtbfv\\])/g, (_match, char) => ({
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    b: "\b",
+    f: "\f",
+    v: "\v",
+    "\\": "\\"
+  })[char]);
+}
+
+function formatPrintf(format, args) {
+  let index = 0;
+  let out = "";
+  const source = decodePrintf(format || "");
+  for (let i = 0; i < source.length; i++) {
+    if (source[i] !== "%" || i === source.length - 1) {
+      out += source[i];
+      continue;
+    }
+    const spec = source[++i];
+    if (spec === "%") {
+      out += "%";
+      continue;
+    }
+    const value = args[index++] ?? "";
+    if (spec === "s") out += String(value);
+    else if (spec === "d" || spec === "i") out += String(Number.parseInt(value, 10) || 0);
+    else if (spec === "f") out += String(Number.parseFloat(value) || 0);
+    else if (spec === "j") out += JSON.stringify(value);
+    else out += `%${spec}`;
+  }
+  return out;
+}
+
+function splitSedCommands(script) {
+  const commands = [];
+  let current = "";
+  let escaped = false;
+  for (const char of String(script)) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      current += char;
+      escaped = true;
+      continue;
+    }
+    if (char === ";") {
+      if (current.trim()) commands.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  if (current.trim()) commands.push(current.trim());
+  return commands;
+}
+
+function readSedPart(command, start, delimiter) {
+  let out = "";
+  let i = start;
+  for (; i < command.length; i++) {
+    const char = command[i];
+    if (char === "\\" && command[i + 1] === delimiter) {
+      out += delimiter;
+      i++;
+      continue;
+    }
+    if (char === delimiter) break;
+    out += char;
+  }
+  if (i >= command.length) throw new Error(`invalid sed substitution: ${command}`);
+  return { value: out, next: i + 1 };
+}
+
+function applySed(text, script) {
+  let out = String(text);
+  for (const command of splitSedCommands(script)) {
+    if (!command.startsWith("s") || command.length < 3) throw new Error(`unsupported sed command: ${command}`);
+    const delimiter = command[1];
+    const pattern = readSedPart(command, 2, delimiter);
+    const replacement = readSedPart(command, pattern.next, delimiter);
+    const flags = command.slice(replacement.next);
+    const regexFlags = `${flags.includes("g") ? "g" : ""}${flags.includes("i") ? "i" : ""}`;
+    const regex = new RegExp(pattern.value, regexFlags);
+    out = out.replace(regex, () => replacement.value);
+  }
+  return out;
 }
 
 function splitConditionals(line) {
@@ -230,6 +367,34 @@ export function createShell(runtime) {
       return "";
     }
     if (cmd === "echo") return argv.slice(1).join(" ");
+    if (cmd === "printf") {
+      const format = argv[1] || "";
+      const args = argv.slice(2);
+      if (!args.length) return decodePrintf(format);
+      return formatPrintf(format, args);
+    }
+    if (cmd === "sed") {
+      let inPlace = false;
+      const rest = [];
+      for (const arg of argv.slice(1)) {
+        if (arg === "-i") inPlace = true;
+        else if (arg.startsWith("-i") && arg.length > 2) inPlace = true;
+        else if (arg.startsWith("-")) throw new Error(`unsupported sed option: ${arg}`);
+        else rest.push(arg);
+      }
+      const script = rest.shift();
+      if (!script) throw new Error("missing sed script");
+      if (inPlace) {
+        if (!rest.length) throw new Error("sed -i requires a file");
+        for (const target of rest) {
+          for (const path of await expandPaths(target)) {
+            await runtime.writeFile(path, applySed(await runtime.readFile(path), script));
+          }
+        }
+        return "";
+      }
+      return applySed(await readInputs(rest, input), script);
+    }
     if (cmd === "env") {
       return Object.entries(runtime.env || {}).map(([key, value]) => `${key}=${value}`).sort().join("\n");
     }
@@ -250,6 +415,7 @@ export function createShell(runtime) {
         return runtime.process.version || (runtime.process.versions?.node ? `v${runtime.process.versions.node}` : "");
       }
       if (argv[1] === "-e" || argv[1] === "--eval") return runInline(argv[2] || "", argv.slice(3));
+      if (argv[1] === "-p" || argv[1] === "--print") return runInline(`console.log(${argv[2] || ""})`, argv.slice(3));
       return runFile(runtime, absPath(argv[1], cwd), argv.slice(2));
     }
     if (cmd === "which") {
@@ -356,14 +522,22 @@ export function createShell(runtime) {
       }
       const doc = heredoc(lines, i);
       if (doc) {
-        const argv = split(doc.head);
-        if (argv[0] === "cat" && (argv[1] === ">" || argv[1] === ">>")) {
-          const path = absPath(argv[2], cwd);
-          const prior = argv[1] === ">>" ? await runtime.readFile(path).catch(() => "") : "";
-          await runtime.writeFile(path, prior + doc.body);
-        } else if (argv[0] === "node") {
-          const result = await runInline(doc.body, argv.slice(1));
-          if (result !== undefined) output.push(String(result));
+        const parsed = parseRedirects(split(doc.head).map((arg) => expandEnv(arg, runtime.env || {})));
+        if (parsed.argv[0] === "cat") {
+          if (parsed.stdout?.path) {
+            const path = absPath(parsed.stdout.path, cwd);
+            const prior = parsed.stdout.append ? await runtime.readFile(path).catch(() => "") : "";
+            await runtime.writeFile(path, prior + doc.body);
+          } else {
+            output.push(doc.body);
+          }
+        } else if (parsed.argv[0] === "node") {
+          const result = await runInline(doc.body, parsed.argv.slice(1));
+          if (parsed.stdout?.path) {
+            const path = absPath(parsed.stdout.path, cwd);
+            const prior = parsed.stdout.append ? await runtime.readFile(path).catch(() => "") : "";
+            await runtime.writeFile(path, prior + (result || ""));
+          } else if (result !== undefined) output.push(String(result));
         } else {
           throw new Error(`unsupported heredoc command: ${doc.head}`);
         }

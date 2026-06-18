@@ -119,6 +119,9 @@ async function upgradeDefaultFile(path, shouldReplace) {
 }
 
 async function upgradeDefaultFiles() {
+  await upgradeDefaultFile("/etc/profile", (text) => (
+    text.trim() === "# DietSurf profile"
+  ));
   await upgradeDefaultFile("/src/agent.js", (text) => (
     text.includes('input.placeholder = "node /src/agent.js \\"goal\\""') &&
     text.includes("const result = await shell(command);")
@@ -147,6 +150,12 @@ async function upgradeDefaultFiles() {
     text.includes('input.placeholder = "goal or shell command"') &&
     text.includes('write("DietSurf")') &&
     !text.includes("interruptRun")
+  ) || (
+    text.includes('"You are helpful executive agent"')
+  ) || (
+    text.includes("Use cat > file <<'EOF' ... EOF to write files.")
+  ) || (
+    text.includes("Use fs.promises for Node-style file operations; it is backed by the virtual filesystem.")
   ));
   await upgradeDefaultFile("/src/ui.css", (text) => (
     text.includes("#dietsurf-prompt:focus") &&
