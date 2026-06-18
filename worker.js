@@ -234,6 +234,8 @@ async function upgradeWorkspaceDefaultFiles(workspace) {
     text.includes("Use fs.promises for Node-style file operations; it is backed by the virtual filesystem.")
   ));
   await upgradeDefaultFile(workspace, "/src/ui.css", (text) => (
+    text.includes("height: 100dvh")
+  ) || (
     text.includes("#dietsurf-prompt:focus") &&
     !text.includes("#dietsurf-status")
   ) || (

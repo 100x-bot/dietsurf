@@ -21,8 +21,7 @@ body {
 #dietsurf {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
-  height: 100vh;
-  height: 100dvh;
+  height: 100%;
   min-height: 0;
 }
 
