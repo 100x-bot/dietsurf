@@ -32,7 +32,8 @@ function formatLs(paths, dir, recursive) {
 
 const BUILTIN_COMMANDS = new Set([
   "cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo",
-  "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find"
+  "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find",
+  "env", "printenv", "uname"
 ]);
 
 function splitOperator(line, operator) {
@@ -90,6 +91,40 @@ function parseRedirects(argv) {
   return { argv: clean, stdout };
 }
 
+function expandEnv(arg, env) {
+  return String(arg).replace(/\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, bare, braced) => {
+    const key = bare || braced;
+    return env[key] ?? "";
+  });
+}
+
+function splitConditionals(line) {
+  const out = [];
+  let quote = "";
+  let start = 0;
+  let op = "";
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (quote) {
+      if (char === quote && line[i - 1] !== "\\") quote = "";
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    const next = line.slice(i, i + 2);
+    if (next === "&&" || next === "||") {
+      out.push({ op, line: line.slice(start, i).trim() });
+      op = next;
+      i++;
+      start = i + 1;
+    }
+  }
+  out.push({ op, line: line.slice(start).trim() });
+  return out.filter((part) => part.line);
+}
+
 export function createShell(runtime) {
   let cwd = "/";
 
@@ -119,6 +154,30 @@ export function createShell(runtime) {
       const haystack = ignoreCase ? line.toLowerCase() : line;
       return haystack.includes(needle);
     }).join("\n");
+  }
+
+  function formatLogItem(value) {
+    if (typeof value === "string") return value;
+    if (value instanceof Error) return value.message;
+    return JSON.stringify(value);
+  }
+
+  async function runInline(source, argv = []) {
+    const output = [];
+    const log = (...items) => output.push(items.map(formatLogItem).join(" "));
+    const nextRuntime = {
+      ...runtime,
+      argv,
+      log,
+      console: { log, warn: log, error: log }
+    };
+    try {
+      await runSource(nextRuntime, source, "/tmp/stdin.js");
+    } catch (error) {
+      if (error && error.__dietsurfDone) output.push(String(error.value ?? ""));
+      else throw error;
+    }
+    return output.filter((line) => line !== "").join("\n");
   }
 
   async function execArgv(argv, input) {
@@ -160,10 +219,26 @@ export function createShell(runtime) {
       return "";
     }
     if (cmd === "echo") return argv.slice(1).join(" ");
+    if (cmd === "env") {
+      return Object.entries(runtime.env || {}).map(([key, value]) => `${key}=${value}`).sort().join("\n");
+    }
+    if (cmd === "printenv") {
+      if (argv[1]) return runtime.env?.[argv[1]] || "";
+      return Object.entries(runtime.env || {}).map(([key, value]) => `${key}=${value}`).sort().join("\n");
+    }
+    if (cmd === "uname") {
+      if (argv.includes("-s")) {
+        if (runtime.process.platform === "darwin") return "Darwin";
+        if (runtime.process.platform === "win32") return "Windows";
+        return "Linux";
+      }
+      return runtime.process.platform || "";
+    }
     if (cmd === "node") {
       if (argv[1] === "--version" || argv[1] === "-v") {
         return runtime.process.version || (runtime.process.versions?.node ? `v${runtime.process.versions.node}` : "");
       }
+      if (argv[1] === "-e" || argv[1] === "--eval") return runInline(argv[2] || "", argv.slice(3));
       return runFile(runtime, absPath(argv[1], cwd), argv.slice(2));
     }
     if (cmd === "which") {
@@ -219,7 +294,7 @@ export function createShell(runtime) {
     let input;
     let redirect = null;
     for (const part of splitOperator(line, "|")) {
-      const parsed = parseRedirects(split(part));
+      const parsed = parseRedirects(split(part).map((arg) => expandEnv(arg, runtime.env || {})));
       redirect = parsed.stdout || redirect;
       input = await execArgv(parsed.argv, input);
     }
@@ -233,16 +308,25 @@ export function createShell(runtime) {
   }
 
   async function executeLine(line) {
-    const groups = splitOperator(line, "||");
+    const groups = splitConditionals(line);
+    const output = [];
+    let lastOk = true;
     let lastError;
     for (const group of groups) {
+      if (group.op === "&&" && !lastOk) continue;
+      if (group.op === "||" && lastOk) continue;
       try {
-        return await executePipeline(group);
+        const result = await executePipeline(group.line);
+        lastOk = true;
+        lastError = undefined;
+        if (result !== undefined && result !== "") output.push(String(result));
       } catch (error) {
+        lastOk = false;
         lastError = error;
       }
     }
-    throw lastError;
+    if (!lastOk) throw lastError;
+    return output.join("\n");
   }
 
   return async function shell(script) {
@@ -262,7 +346,7 @@ export function createShell(runtime) {
           const prior = argv[1] === ">>" ? await runtime.readFile(path).catch(() => "") : "";
           await runtime.writeFile(path, prior + doc.body);
         } else if (argv[0] === "node") {
-          const result = await runSource(runtime, doc.body, "/tmp/stdin.js");
+          const result = await runInline(doc.body, argv.slice(1));
           if (result !== undefined) output.push(String(result));
         } else {
           throw new Error(`unsupported heredoc command: ${doc.head}`);

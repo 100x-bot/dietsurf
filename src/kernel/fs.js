@@ -25,6 +25,11 @@ function fileStat(path, text, directory) {
 
 export function createFs(runtime) {
   const filePath = (path) => absPath(String(path), runtime.cwd || "/");
+  function readFileSync(path, options) {
+    if (!runtime.readFileSync) throw new Error("readFileSync is not available");
+    const text = runtime.readFileSync(filePath(path));
+    return encodingOf(options) ? text : Buffer.from(text);
+  }
   const promises = {
     async readFile(path, options) {
       const text = await runtime.readFile(filePath(path));
@@ -82,6 +87,15 @@ export function createFs(runtime) {
   };
   return {
     promises,
+    readFileSync,
+    existsSync(path) {
+      try {
+        readFileSync(path, "utf8");
+        return true;
+      } catch {
+        return false;
+      }
+    },
     readFile: callback(promises.readFile),
     writeFile: callback(promises.writeFile),
     readdir: callback(promises.readdir),

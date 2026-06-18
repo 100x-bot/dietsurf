@@ -4,6 +4,7 @@ import { PROJECT_FILES, createRuntime, toErrorText } from "./kernel.js";
 const STORE = "dietsurf.files";
 const db = new Dexie("dietsurf");
 db.version(1).stores({ files: "path" });
+const fileCache = new Map();
 
 function enableActionSidePanel() {
   if (!chrome.sidePanel?.setPanelBehavior) return;
@@ -33,14 +34,26 @@ async function allFiles() {
   return Object.fromEntries(rows.map((row) => [row.path, row.text]));
 }
 
+async function hydrateFileCache() {
+  fileCache.clear();
+  for (const row of await db.files.toArray()) fileCache.set(row.path, row.text);
+}
+
 async function readFile(path) {
   const file = await db.files.get(path);
   if (!file) throw new Error(`no such file: ${path}`);
   return file.text;
 }
 
+function readFileSync(path) {
+  if (!fileCache.has(path)) throw new Error(`no such file: ${path}`);
+  return fileCache.get(path);
+}
+
 async function writeFile(path, text) {
-  await db.files.put({ path, text: String(text) });
+  const value = String(text);
+  await db.files.put({ path, text: value });
+  fileCache.set(path, value);
   notifyFileChanged(path);
 }
 
@@ -52,6 +65,7 @@ async function listFiles(path = "/") {
 
 async function removeFile(path) {
   await db.files.delete(path);
+  fileCache.delete(path);
   notifyFileChanged(path);
 }
 
@@ -75,8 +89,11 @@ async function packagedFiles() {
 }
 
 async function resetProject() {
+  const files = await packagedFiles();
   await db.files.clear();
-  await db.files.bulkPut(await packagedFiles());
+  await db.files.bulkPut(files);
+  fileCache.clear();
+  for (const file of files) fileCache.set(file.path, file.text);
   notifyFileChanged("/");
 }
 
@@ -89,6 +106,7 @@ async function seedMissingFiles() {
     files.push({ path, text: response.ok ? await response.text() : "" });
   }
   if (files.length) await db.files.bulkPut(files);
+  for (const file of files) fileCache.set(file.path, file.text);
 }
 
 async function upgradeDefaultFile(path, shouldReplace) {
@@ -121,6 +139,9 @@ async function upgradeDefaultFiles() {
   ) || (
     text.includes("Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, node, clear, reset, jobs, kill.") &&
     text.includes("If you can answer the user directly")
+  ) || (
+    text.includes("Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, node, clear, reset, jobs, kill, which, grep, head, find.") &&
+    !text.includes("/etc/browser.json and /src/runtime/chrome-puppeteer.js are only for running the same agent from real host Node")
   ));
   await upgradeDefaultFile("/src/ui.css", (text) => (
     text.includes("#dietsurf-prompt:focus") &&
@@ -131,11 +152,14 @@ async function upgradeDefaultFiles() {
 async function seedFiles() {
   await migrateChromeStorage();
   if (await db.files.get("/src/agent.js")) {
+    await hydrateFileCache();
     await seedMissingFiles();
     await upgradeDefaultFiles();
+    await hydrateFileCache();
     return;
   }
   await db.files.bulkPut(await packagedFiles());
+  await hydrateFileCache();
 }
 
 function chromeFacade() {
@@ -198,6 +222,7 @@ async function runtime() {
     runtimePromise = Promise.resolve(createRuntime({
       chrome: chromeFacade(),
       readFile,
+      readFileSync,
       writeFile,
       listFiles,
       removeFile,

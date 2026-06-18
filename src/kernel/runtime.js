@@ -40,6 +40,7 @@ export function createRuntime(base) {
     cwd: "/",
     chrome: base.chrome,
     readFile: base.readFile,
+    readFileSync: base.readFileSync,
     writeFile: base.writeFile,
     listFiles: base.listFiles,
     removeFile: base.removeFile,

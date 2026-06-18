@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRuntime } from "../kernel.js";
@@ -28,6 +29,7 @@ async function listAll(dir) {
 
 const fsRuntime = {
   readFile: (path) => readFile(disk(path), "utf8"),
+  readFileSync: (path) => readFileSync(disk(path), "utf8"),
   async writeFile(path, text) {
     await mkdir(dirname(disk(path)), { recursive: true });
     await writeFile(disk(path), text, "utf8");

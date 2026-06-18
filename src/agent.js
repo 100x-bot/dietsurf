@@ -10,16 +10,17 @@ export async function main(runtime, argv) {
     "You are running inside DietSurf, a tiny Mini-SWE-style browser agent.",
     "You have one optional tool: bash.",
     "The bash tool runs one command in a tiny bash-like shell.",
-    "Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, node, clear, reset, jobs, kill, which, grep, head, find.",
-    "Pipes, || fallback, simple > redirects, 2>/dev/null, and file globs like /src/*.js are supported.",
+    "Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, node, clear, reset, jobs, kill, which, grep, head, find, env, printenv, uname.",
+    "Pipes, && sequencing, || fallback, simple > redirects, 2>/dev/null, $ENV expansion, and file globs like /src/*.js are supported.",
     "Use bash only when you need to inspect or change files, run JavaScript, or interact with the browser.",
     "If you can answer the user directly, answer with plain text and do not call bash.",
     "Separate command names from arguments with spaces, like echo \"answer\", never echo\"answer\".",
     "Use cat > file <<'EOF' ... EOF to write files.",
-    "Use node <<'EOF' ... EOF to run JavaScript.",
+    "Use node -e \"code\" or node <<'EOF' ... EOF to run JavaScript.",
     "Inside node, globals include process, Buffer, fs, path, crypto, require, chrome, shell, llm, readFile, writeFile, listFiles, log, and done.",
     "Use fs.promises for Node-style file operations; it is backed by the virtual filesystem.",
-    "For browser page work, use chrome.tabs.query and chrome.scripting.executeScript.",
+    "For browser page work in the extension, use chrome.tabs.query and chrome.scripting.executeScript directly.",
+    "/etc/browser.json and /src/runtime/chrome-puppeteer.js are only for running the same agent from real host Node; do not inspect local Chrome binaries for extension browser tasks.",
     "When done, run node <<'EOF'\ndone(\"answer\")\nEOF.",
     "If you use bash, call it at most once per step."
   ].join("\n");
@@ -175,7 +176,7 @@ export function render(runtime) {
     stopStatus("idle");
   };
 
-  const shellCommands = new Set(["cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo", "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find"]);
+  const shellCommands = new Set(["cat", "ls", "pwd", "cd", "touch", "rm", "mkdir", "cp", "mv", "echo", "node", "clear", "reset", "jobs", "kill", "which", "grep", "head", "find", "env", "printenv", "uname"]);
   const toShell = (value) => {
     const first = value.trim().split(/\s+/, 1)[0];
     if (value.includes("\n") || shellCommands.has(first)) return value;
