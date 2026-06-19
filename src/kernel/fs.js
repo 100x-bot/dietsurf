@@ -55,7 +55,10 @@ export function createFs(runtime) {
     async unlink(path) {
       await runtime.removeFile(filePath(path));
     },
-    async mkdir() {},
+    async mkdir(path, options = {}) {
+      if (!runtime.mkdir) throw new Error("mkdir is not available");
+      await runtime.mkdir(filePath(path), options);
+    },
     async stat(path) {
       const target = filePath(path);
       try {

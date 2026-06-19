@@ -3,6 +3,23 @@ import { createRuntime, runSource } from "../kernel.js";
 
 function createMemoryRuntime(initial = {}) {
   const files = new Map(Object.entries(initial));
+  const dirs = new Set(["/"]);
+  for (const path of files.keys()) {
+    const parts = path.split("/").filter(Boolean);
+    let current = "";
+    for (const part of parts.slice(0, -1)) {
+      current += `/${part}`;
+      dirs.add(current);
+    }
+  }
+  const mkdirp = (path) => {
+    const parts = path.split("/").filter(Boolean);
+    let current = "";
+    for (const part of parts) {
+      current += `/${part}`;
+      dirs.add(current);
+    }
+  };
   return {
     files,
     runtime: createRuntime({
@@ -19,10 +36,19 @@ function createMemoryRuntime(initial = {}) {
       },
       listFiles: async (path = "/") => {
         const prefix = path === "/" ? "/" : `${path.replace(/\/$/, "")}/`;
-        return [...files.keys()].filter((file) => file === path || file.startsWith(prefix));
+        return [...new Set([...dirs, ...files.keys()])].filter((file) => file === path || file.startsWith(prefix));
       },
       removeFile: async (path) => {
         files.delete(path);
+      },
+      mkdir: async (path, options = {}) => {
+        if (options.recursive) {
+          mkdirp(path);
+          return;
+        }
+        const parent = path.slice(0, path.lastIndexOf("/")) || "/";
+        if (!dirs.has(parent)) throw new Error(`no such directory: ${parent}`);
+        dirs.add(path);
       },
       env: {},
       log: () => undefined
@@ -48,6 +74,16 @@ assert.equal(await runtime.shell('node -p "1 + 1"'), "2");
 
 await runtime.shell("sed -i 's/#080808/#ffffff/g; s/dark/light/g' /src/ui.css");
 assert.equal(files.get("/src/ui.css"), ":root {\n  color-scheme: light;\n  background: #ffffff;\n}\n");
+
+await runtime.shell("mkdir -p /tmp/a/b");
+assert.ok((await runtime.listFiles("/tmp")).includes("/tmp/a/b"));
+
+await runtime.shell("cat > /tmp/sed.txt <<'EOF'\none\ntwo\nthree\nfour\nEOF");
+assert.equal(await runtime.shell("sed -n '2,3p' /tmp/sed.txt"), "two\nthree");
+assert.equal(await runtime.shell("sed '/two/,/three/d' /tmp/sed.txt"), "one\nfour");
+assert.equal(await runtime.shell("sed '2s/two/TWO/' /tmp/sed.txt"), "one\nTWO\nthree\nfour");
+await assert.rejects(runtime.shell("for x in a b; do echo $x; done"), /shell loops are not supported/);
+await assert.rejects(runtime.shell("echo hi &"), /background jobs/);
 
 await runtime.shell('node -e \'await fs.promises.writeFile("/tmp/d","ok"); console.log("Done")\'');
 assert.equal(files.get("/tmp/d"), "ok");

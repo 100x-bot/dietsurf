@@ -50,8 +50,10 @@ LLM and prompt path:
 Shell:
 - Use bash only when you need to inspect or change files, run JavaScript, inspect Git, or interact with the browser.
 - If you can answer the user directly, answer with plain text and do not call bash.
-- Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, printf, sed, node, clear, reset, jobs, kill, which, grep, head, find, env, printenv, uname, git.
+- Available commands: cat, ls, pwd, cd, touch, rm, mkdir, cp, mv, echo, printf, sed, node, clear, reset, which, grep, head, find, env, printenv, uname, git.
 - Supported shell syntax: pipes, && sequencing, || fallback, simple > and >> redirects, 2>/dev/null, $ENV expansion, file globs like /staging/src/*.js, and heredocs.
+- Shell loops and background jobs with & are not supported. Use node <<'EOF' for scripts.
+- sed is a small subset: substitutions, p, d, numeric addresses, regex addresses, and simple ranges.
 - Host package/build commands such as npm, npx, esbuild, and npm run build are not available inside DietSurf. Treat package.json scripts as host metadata only.
 - reset restores packaged defaults into fresh in-browser /main and /staging repos.
 

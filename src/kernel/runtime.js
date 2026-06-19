@@ -50,6 +50,7 @@ export function createRuntime(base) {
     writeFile: base.writeFile,
     listFiles: base.listFiles,
     removeFile: base.removeFile,
+    mkdir: base.mkdir,
     resetProject: base.resetProject,
     clearHistory: base.clearHistory,
     git: base.git,

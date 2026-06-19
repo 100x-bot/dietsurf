@@ -220,19 +220,136 @@ function readSedPart(command, start, delimiter) {
   return { value: out, next: i + 1 };
 }
 
-function applySed(text, script) {
-  let out = String(text);
-  for (const command of splitSedCommands(script)) {
-    if (!command.startsWith("s") || command.length < 3) throw new Error(`unsupported sed command: ${command}`);
-    const delimiter = command[1];
-    const pattern = readSedPart(command, 2, delimiter);
+function parseSedAddress(command, start) {
+  const char = command[start];
+  if (!char) return null;
+  if (/\d/.test(char)) {
+    let i = start;
+    while (/\d/.test(command[i] || "")) i++;
+    return { address: { type: "line", value: Number(command.slice(start, i)) }, next: i };
+  }
+  if (char === "$") return { address: { type: "last" }, next: start + 1 };
+  if (char === "/") {
+    const pattern = readSedPart(command, start + 1, "/");
+    return { address: { type: "regex", regex: new RegExp(pattern.value) }, next: pattern.next };
+  }
+  return null;
+}
+
+function parseSedCommand(raw) {
+  const command = String(raw).trim();
+  let index = 0;
+  let address = null;
+  const first = parseSedAddress(command, index);
+  if (first) {
+    address = { start: first.address };
+    index = first.next;
+    if (command[index] === ",") {
+      const second = parseSedAddress(command, index + 1);
+      if (!second) throw new Error(`invalid sed range: ${command}`);
+      address.end = second.address;
+      index = second.next;
+    }
+  }
+
+  const op = command[index];
+  if (op === "s") {
+    const delimiter = command[index + 1];
+    if (!delimiter) throw new Error(`invalid sed substitution: ${command}`);
+    const pattern = readSedPart(command, index + 2, delimiter);
     const replacement = readSedPart(command, pattern.next, delimiter);
     const flags = command.slice(replacement.next);
     const regexFlags = `${flags.includes("g") ? "g" : ""}${flags.includes("i") ? "i" : ""}`;
-    const regex = new RegExp(pattern.value, regexFlags);
-    out = out.replace(regex, () => replacement.value);
+    return {
+      op,
+      address,
+      regex: new RegExp(pattern.value, regexFlags),
+      replacement: replacement.value,
+      print: flags.includes("p"),
+      rangeActive: false
+    };
   }
-  return out;
+  if (op === "p" || op === "d") return { op, address, rangeActive: false };
+  throw new Error(`unsupported sed command: ${command}`);
+}
+
+function sedAddressMatches(address, line, lineNumber, totalLines) {
+  if (!address) return true;
+  if (address.type === "line") return lineNumber === address.value;
+  if (address.type === "last") return lineNumber === totalLines;
+  if (address.type === "regex") return address.regex.test(line);
+  return false;
+}
+
+function sedCommandMatches(command, line, lineNumber, totalLines) {
+  if (!command.address) return true;
+  if (!command.address.end) return sedAddressMatches(command.address.start, line, lineNumber, totalLines);
+  if (command.rangeActive) {
+    if (sedAddressMatches(command.address.end, line, lineNumber, totalLines)) command.rangeActive = false;
+    return true;
+  }
+  if (!sedAddressMatches(command.address.start, line, lineNumber, totalLines)) return false;
+  command.rangeActive = !sedAddressMatches(command.address.end, line, lineNumber, totalLines);
+  return true;
+}
+
+function applySed(text, script, options = {}) {
+  const commands = splitSedCommands(script).map(parseSedCommand);
+  const lines = String(text).split("\n");
+  const hadTrailingNewline = lines.length > 1 && lines[lines.length - 1] === "";
+  if (hadTrailingNewline) lines.pop();
+  const out = [];
+  const totalLines = lines.length;
+
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+    const printed = [];
+    let deleted = false;
+    for (const command of commands) {
+      if (!sedCommandMatches(command, line, i + 1, totalLines)) continue;
+      if (command.op === "s") {
+        const prior = line;
+        line = line.replace(command.regex, command.replacement);
+        if (command.print && line !== prior) printed.push(line);
+      } else if (command.op === "p") {
+        printed.push(line);
+      } else if (command.op === "d") {
+        deleted = true;
+        break;
+      }
+    }
+    out.push(...printed);
+    if (!deleted && !options.quiet) out.push(line);
+  }
+
+  return out.join("\n") + (hadTrailingNewline && out.length ? "\n" : "");
+}
+
+function hasBackgroundOperator(line) {
+  let quote = "";
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (quote) {
+      if (char === quote && line[i - 1] !== "\\") quote = "";
+      continue;
+    }
+    if (char === "'" || char === '"') {
+      quote = char;
+      continue;
+    }
+    if (char !== "&") continue;
+    if (line[i - 1] === "&" || line[i + 1] === "&" || line[i - 1] === ">") continue;
+    return true;
+  }
+  return false;
+}
+
+function assertSupportedShellSyntax(line) {
+  const trimmed = line.trim();
+  if (/^(for|while|until)\b/.test(trimmed) || trimmed === "do" || trimmed === "done") {
+    throw new Error("shell loops are not supported; use node <<'EOF' for scripts");
+  }
+  if (hasBackgroundOperator(trimmed)) throw new Error("background jobs with & are not supported");
 }
 
 function splitConditionals(line) {
@@ -358,7 +475,19 @@ export function createShell(runtime) {
       await runtime.removeFile(absPath(argv[1], cwd));
       return "";
     }
-    if (cmd === "mkdir") return "";
+    if (cmd === "mkdir") {
+      let recursive = false;
+      const targets = [];
+      for (const arg of argv.slice(1)) {
+        if (arg === "-p") recursive = true;
+        else if (arg.startsWith("-")) throw new Error(`unsupported mkdir option: ${arg}`);
+        else targets.push(arg);
+      }
+      if (!targets.length) throw new Error("mkdir requires a path");
+      if (!runtime.mkdir) throw new Error("mkdir is not available");
+      for (const target of targets) await runtime.mkdir(absPath(target, cwd), { recursive });
+      return "";
+    }
     if (cmd === "cp") {
       await runtime.writeFile(absPath(argv[2], cwd), await runtime.readFile(absPath(argv[1], cwd)));
       return "";
@@ -379,10 +508,12 @@ export function createShell(runtime) {
     }
     if (cmd === "sed") {
       let inPlace = false;
+      let quiet = false;
       const rest = [];
       for (const arg of argv.slice(1)) {
         if (arg === "-i") inPlace = true;
         else if (arg.startsWith("-i") && arg.length > 2) inPlace = true;
+        else if (arg === "-n") quiet = true;
         else if (arg.startsWith("-")) throw new Error(`unsupported sed option: ${arg}`);
         else rest.push(arg);
       }
@@ -397,7 +528,7 @@ export function createShell(runtime) {
         }
         return "";
       }
-      return applySed(await readInputs(rest, input), script);
+      return applySed(await readInputs(rest, input), script, { quiet });
     }
     if (cmd === "env") {
       return Object.entries(runtime.env || {}).map(([key, value]) => `${key}=${value}`).sort().join("\n");
@@ -466,8 +597,8 @@ export function createShell(runtime) {
       await runtime.resetProject();
       return "reset virtual project";
     }
-    if (cmd === "jobs") return "";
-    if (cmd === "kill") return "";
+    if (cmd === "jobs") throw new Error("background jobs are not supported");
+    if (cmd === "kill") throw new Error("process management is not supported; use Escape or Ctrl+C to interrupt the active run");
     throw new Error(`unknown command: ${cmd}`);
   }
 
@@ -492,6 +623,7 @@ export function createShell(runtime) {
 
   async function executeLine(line) {
     checkAbort();
+    assertSupportedShellSyntax(line);
     const groups = splitConditionals(line);
     const output = [];
     let lastOk = true;

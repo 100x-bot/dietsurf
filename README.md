@@ -91,3 +91,7 @@ scripts/build-unpacked.mjs builds the loadable unpacked extension
 The browser shell is not a host shell. Commands such as `npm`, `npx`, and
 `esbuild` are development commands that run outside DietSurf, not inside the
 extension's virtual shell.
+
+The in-browser shell is intentionally small. It supports simple commands,
+redirects, pipes, conditionals, heredocs, `node`, and `git`; it does not support
+shell loops or background jobs. Use `node <<'EOF'` for non-trivial scripts.

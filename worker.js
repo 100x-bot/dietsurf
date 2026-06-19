@@ -161,6 +161,7 @@ async function visibleFiles(root = "/") {
       return;
     }
     if (!stat.isDirectory()) return;
+    out.push(path);
     for (const name of (await pfs.readdir(path)).sort()) {
       const next = path === "/" ? `/${name}` : `${path}/${name}`;
       await walk(next);
@@ -313,6 +314,19 @@ async function removeFile(path) {
   const repo = pathRepo(clean);
   if (repo?.locked) throw new Error("/main is locked; remove files under /staging and promote it");
   await removeRawFile(clean);
+  notifyFileChanged(clean);
+}
+
+async function makeDirectory(path, options = {}) {
+  await ensureRepo();
+  const clean = cleanPath(path);
+  const repo = pathRepo(clean);
+  if (repo?.locked) throw new Error("/main is locked; create directories under /staging and promote it");
+  if (options?.recursive) {
+    await mkdirp(clean);
+  } else {
+    await pfs.mkdir(clean);
+  }
   notifyFileChanged(clean);
 }
 
@@ -624,6 +638,7 @@ async function runtime(workspace) {
       writeFile,
       listFiles,
       removeFile,
+      mkdir: makeDirectory,
       resetProject,
       clearHistory: () => undefined,
       git: (argv, options = {}) => gitCommand(argv, { cwd: options.cwd || root }),
