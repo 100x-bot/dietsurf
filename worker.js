@@ -3,6 +3,7 @@ import LightningFS from "@isomorphic-git/lightning-fs";
 import { Buffer } from "buffer";
 import { createTwoFilesPatch } from "diff";
 import { PROJECT_FILES, absPath, createRuntime, loadModule, toErrorText } from "./kernel.js";
+import { createLlmApi } from "./src/llm/api.js";
 
 const FS_NAME = "dietsurf-git";
 const MAIN_DIR = "/main";
@@ -633,6 +634,7 @@ async function runtime(workspace) {
       workspace: key,
       cwd: root,
       llmConfigPath: `${root}/etc/llm.json`,
+      createLlmApi,
       chrome: chromeFacade(),
       readFile,
       writeFile,

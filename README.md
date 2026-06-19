@@ -82,6 +82,7 @@ worker.js                 service-worker bootloader and browser Git filesystem
 sidepanel.js              side-panel bootloader
 src/agent.js              packaged default agent and UI source seeded into both repos
 src/kernel/*              shell, runtime, JS-like module execution, VFS helpers
+src/llm/api.js            LLM provider adapter and tool schema
 etc/profile               runtime instructions exposed to the agent
 scripts/build-unpacked.mjs builds the loadable unpacked extension
 ```

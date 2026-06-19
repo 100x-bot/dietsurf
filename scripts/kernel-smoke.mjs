@@ -60,6 +60,21 @@ const { runtime, files } = createMemoryRuntime({
   "/src/ui.css": ":root {\n  color-scheme: dark;\n  background: #080808;\n}\n"
 });
 
+await assert.rejects(runtime.llm("hello"), /llm api is not available/);
+
+const injectedRuntime = createRuntime({
+  readFile: runtime.readFile,
+  writeFile: runtime.writeFile,
+  listFiles: runtime.listFiles,
+  removeFile: runtime.removeFile,
+  createLlmApi: () => ({
+    query: async () => ({ text: "ok", toolCalls: [], messages: [], finishReason: "stop" }),
+    llm: async () => "ok"
+  }),
+  log: () => undefined
+});
+assert.equal(await injectedRuntime.llm("hello"), "ok");
+
 await runtime.shell("cat > /tmp/a << 'EOF'\nhello\nEOF");
 assert.equal(files.get("/tmp/a"), "hello");
 

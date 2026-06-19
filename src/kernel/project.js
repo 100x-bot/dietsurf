@@ -11,6 +11,7 @@ export const PROJECT_FILES = [
   "/etc/profile",
   "/src/agent.js",
   "/src/runtime/chrome-puppeteer.js",
+  "/src/llm/api.js",
   "/src/kernel/project.js",
   "/src/kernel/path.js",
   "/src/kernel/jslike.js",

@@ -1,5 +1,3 @@
-import { generateText, jsonSchema, tool } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { Buffer } from "buffer";
 import pathShim from "path-browserify";
 import processShim from "process/browser.js";
@@ -101,51 +99,16 @@ export function createRuntime(base) {
     crypto: runtime.crypto,
     require: runtime.require
   };
-  async function query(input, options = {}) {
-    runtime.throwIfAborted();
-    const { baseUrl, apiKey, apiKeyEnv, model } = JSON.parse(await runtime.readFile(runtime.llmConfigPath));
-    const key = apiKey || runtime.env[apiKeyEnv];
-    if (!key) throw new Error(`missing ${runtime.llmConfigPath} apiKey${apiKeyEnv ? ` or ${apiKeyEnv}` : ""}`);
-    const provider = createOpenAICompatible({ name: "byok", apiKey: key, baseURL: baseUrl });
-    const messages = Array.isArray(input) ? input : [{ role: "user", content: String(input) }];
-    const request = {
-      model: provider(model),
-      messages,
-      temperature: 0,
-      allowSystemInMessages: true,
-      abortSignal: runtime.abortSignal
+  if (base.createLlmApi) {
+    Object.assign(runtime, base.createLlmApi(runtime));
+  } else {
+    runtime.query = async () => {
+      throw new Error("llm api is not available");
     };
-    if (options.tool === "bash") {
-      request.tools = {
-        bash: tool({
-          description: "Run one command in the DietSurf bash-like shell.",
-          inputSchema: jsonSchema({
-            type: "object",
-            properties: {
-              command: {
-                type: "string",
-                description: "The shell command to execute."
-              }
-            },
-            required: ["command"],
-            additionalProperties: false
-          })
-        })
-      };
-    }
-    const result = await generateText(request);
-    runtime.throwIfAborted();
-    return {
-      text: result.text.trim(),
-      toolCalls: result.toolCalls,
-      messages: result.response.messages,
-      finishReason: result.finishReason
+    runtime.llm = async () => {
+      throw new Error("llm api is not available");
     };
   }
-  runtime.query = query;
-  runtime.llm = async function llm(input) {
-    return (await query(input)).text;
-  };
   runtime.done = (value = "") => {
     const error = new Error("done");
     error.__dietsurfDone = true;

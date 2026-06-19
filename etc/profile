@@ -27,7 +27,8 @@ Core architecture:
 - worker.js is the service worker. It owns the LightningFS + isomorphic-git data in IndexedDB, seeds packaged files into /main and /staging, handles readFile/writeFile/listFiles/shell messages, enforces /main as read-only by visible path, exposes git in the shell, and keeps separate pane run state.
 - kernel.js re-exports the runtime kernel modules from src/kernel/*.
 - src/kernel/jslike.js executes JavaScript modules through jslike. It provides globals, resolves virtual imports with runtime.readFile, and sets runtime.agentPath and runtime.entryPath when node runs a file.
-- src/kernel/runtime.js builds the Node-like runtime: process, Buffer, fs, path, crypto, require, shell, git, llm/query, done(), and abort handling.
+- src/kernel/runtime.js builds the Node-like runtime: process, Buffer, fs, path, crypto, require, shell, git, done(), and abort handling. It does not import provider/API code.
+- src/llm/api.js owns provider configuration, runtime.query(), runtime.llm(), and LLM tool definitions.
 - src/kernel/shell.js implements the browser shell commands.
 - src/kernel/fs.js provides the fs and fs.promises shim backed by the visible virtual filesystem.
 - src/kernel/project.js lists packaged default files that seed fresh /main and /staging repos.

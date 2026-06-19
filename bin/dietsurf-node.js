@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRuntime } from "../kernel.js";
+import { createLlmApi } from "../src/llm/api.js";
 import { createPuppeteerChrome } from "../src/runtime/chrome-puppeteer.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,7 +36,8 @@ const fsRuntime = {
     await writeFile(disk(path), text, "utf8");
   },
   listFiles: (path = "/") => listAll(path),
-  removeFile: (path) => rm(disk(path), { force: true })
+  removeFile: (path) => rm(disk(path), { force: true }),
+  mkdir: (path, options = {}) => mkdir(disk(path), options)
 };
 
 const browserConfig = JSON.parse(await fsRuntime.readFile("/etc/browser.json"));
@@ -45,6 +47,7 @@ try {
   const runtime = createRuntime({
     ...fsRuntime,
     chrome,
+    createLlmApi,
     env: process.env,
     clearHistory: () => fsRuntime.writeFile("/var/log/history.jsonl", ""),
     log: (...args) => console.log(...args)
