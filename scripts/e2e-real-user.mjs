@@ -67,8 +67,7 @@ try {
 
   const seed = await panel.evaluate((apiKey) => chrome.runtime.sendMessage({
     type: "writeFile",
-    workspace: "staging",
-    path: "/etc/llm.json",
+    path: "/staging/etc/llm.json",
     text: JSON.stringify({
       baseUrl: "https://api.getlilac.com/v1",
       apiKey,
@@ -80,7 +79,7 @@ try {
   const promote = await panel.evaluate(() => chrome.runtime.sendMessage({
     type: "shell",
     workspace: "staging",
-    command: 'git add /etc/llm.json && git commit -m "Configure LLM" && git promote staging'
+    command: 'git add etc/llm.json && git commit -m "Configure LLM" && git promote staging'
   }));
   if (!promote?.ok) throw new Error(promote?.error || "failed to promote llm config");
 
@@ -89,7 +88,7 @@ try {
     document.querySelector("#dietsurf-main-host").shadowRoot.querySelector("#dietsurf-prompt")
   ));
   await prompt.click();
-  await panel.keyboard.type('node /src/agent.js "read the active tab title and return only the title"', { delay: 2 });
+  await panel.keyboard.type('node /main/src/agent.js "read the active tab title and return only the title"', { delay: 2 });
   await panel.keyboard.press("Enter");
   await target.bringToFront();
 

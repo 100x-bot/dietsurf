@@ -129,8 +129,7 @@ await page.waitForSelector("#dietsurf-main-host");
 if (process.env.LILAC_API_KEY) {
   const response = await page.evaluate((apiKey) => chrome.runtime.sendMessage({
     type: "writeFile",
-    workspace: "staging",
-    path: "/etc/llm.json",
+    path: "/staging/etc/llm.json",
     text: JSON.stringify({
       baseUrl: "https://api.getlilac.com/v1",
       apiKey,
@@ -142,10 +141,10 @@ if (process.env.LILAC_API_KEY) {
   const promote = await page.evaluate(() => chrome.runtime.sendMessage({
     type: "shell",
     workspace: "staging",
-    command: 'git add /etc/llm.json && git commit -m "Configure LLM" && git promote staging'
+    command: 'git add etc/llm.json && git commit -m "Configure LLM" && git promote staging'
   }));
   if (!promote?.ok) throw new Error(promote?.error || "failed to promote llm config");
-  console.log("seeded /etc/llm.json in staging and promoted it to main from LILAC_API_KEY");
+  console.log("seeded /staging/etc/llm.json and promoted it to /main from LILAC_API_KEY");
 }
 
 console.log(`extension: chrome-extension://${extensionId}/sidepanel.html`);

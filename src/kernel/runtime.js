@@ -43,7 +43,7 @@ function createRequire(runtime) {
 export function createRuntime(base) {
   const runtime = {
     argv: [],
-    cwd: "/",
+    cwd: base.cwd || "/",
     chrome: base.chrome,
     readFile: base.readFile,
     readFileSync: base.readFileSync,

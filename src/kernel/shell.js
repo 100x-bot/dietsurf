@@ -263,7 +263,7 @@ function splitConditionals(line) {
 }
 
 export function createShell(runtime) {
-  let cwd = "/";
+  let cwd = runtime.cwd || "/";
 
   function checkAbort() {
     runtime.throwIfAborted?.();
