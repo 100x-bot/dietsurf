@@ -1,29 +1,31 @@
 # DietSurf
 
-DietSurf is a minimal Chrome side-panel browser agent. It gives the agent and the
-user one shared shell, one editable virtual filesystem, and small editable agent
-loops instead of a separate workflow UI.
+DietSurf is a minimal Chrome side-panel browser agent. It runs a simple
+SWE-style loop in the extension service worker:
 
-The extension seeds its editable project files into LightningFS-backed Git repos
-in IndexedDB, then runs `/main/src/agent.js` and `/staging/src/agent.js` through
-the DietSurf kernel. Main is visibly under `/main` and locked. Staging is
-visibly under `/staging` and writable. After first load, the in-browser repos are
-the live source of truth; the packaged files are reset material and defaults.
+1. Send the user goal to the LLM.
+2. If the response contains one fenced JavaScript block, run that block in the
+   service-worker context.
+3. Append the execution result as an observation.
+4. Continue until the LLM answers without a JavaScript block.
 
-## What It Does
+There is no bash layer, Linux command surface, virtual filesystem, in-browser
+Git, Node runtime, `done(...)`, or tool schema. A normal answer without a
+JavaScript block is the only stop signal.
 
-- Opens as a Chrome side panel with Main and Staging terminal panes stacked
-  vertically.
-- Runs direct shell commands such as `ls`, `cat`, `grep`, `node`, `sed`, and
-  heredoc writes.
-- Exposes an in-browser `git` command for status, diffs, staging, commits, logs,
-  and promoting Staging into Main.
-- Treats non-shell input as a goal and routes it through that pane's explicit
-  agent path: `/main/src/agent.js` or `/staging/src/agent.js`.
-- Lets the agent inspect and edit the same virtual project files the user sees.
-- Keeps branch state visible as directories. Main files are under `/main/**`;
-  Staging files are under `/staging/**`.
-- Builds a loadable unpacked extension under `build/unpacked`.
+## Runtime Context
+
+JavaScript blocks run with ordinary service-worker values:
+
+```js
+console.log("hello")
+const tabs = await chrome.tabs.query({})
+console.log(tabs.map((tab) => tab.title).join("\n"))
+```
+
+Available globals are service-context APIs such as `chrome`, `fetch`, `console`,
+`crypto`, `caches`, `indexedDB`, `URL`, `TextEncoder`, `TextDecoder`,
+`setTimeout`, and `clearTimeout`.
 
 ## Quick Start
 
@@ -45,21 +47,9 @@ Load this directory in Chrome:
 build/unpacked
 ```
 
-For extension-mode LLM calls, set the API key inside virtual
-`/staging/etc/llm.json` from the Staging side-panel shell, then commit/promote if
-you want Main to use it at `/main/etc/llm.json`. For local Node mode, `.env` can provide
-`LILAC_API_KEY`.
-
-Inside DietSurf, use:
-
-```sh
-git status
-git diff
-git diff main..staging
-git add src/agent.js
-git commit -m "Update agent"
-git promote staging
-```
+For local builds, `.env` can provide `LILAC_API_KEY`; the build script writes it
+into ignored unpacked extension artifacts. The packaged default config lives in
+`etc/llm.json`.
 
 ## Useful Commands
 
@@ -67,32 +57,16 @@ git promote staging
 npm test
 npm run build
 npm run build:plugin
-npm run dev:extension
-npm run e2e:real-user
 ```
-
-`npm run build` writes generated extension files into `build/unpacked`. The
-older root-level `dist/` output is intentionally not used.
 
 ## Project Shape
 
 ```text
-manifest.json             Chrome extension manifest
-worker.js                 service-worker bootloader and browser Git filesystem
-sidepanel.js              side-panel bootloader
-src/agent.js              packaged default agent and UI source seeded into both repos
-src/kernel/*              shell, runtime, JS-like module execution, VFS helpers
-src/llm/api.js            LLM provider adapter and tool schema
-etc/profile               runtime instructions exposed to the agent
+manifest.json              Chrome extension manifest
+worker.js                  service-worker loop and JS execution owner
+sidepanel.js               side-panel transcript UI
+src/agent.js               fenced-JS SWE loop
+src/kernel/jslike.js       JS interpreter bridge for MV3-safe execution
+src/llm/api.js             LLM provider adapter
 scripts/build-unpacked.mjs builds the loadable unpacked extension
 ```
-
-## Notes
-
-The browser shell is not a host shell. Commands such as `npm`, `npx`, and
-`esbuild` are development commands that run outside DietSurf, not inside the
-extension's virtual shell.
-
-The in-browser shell is intentionally small. It supports simple commands,
-redirects, pipes, conditionals, heredocs, `node`, and `git`; it does not support
-shell loops or background jobs. Use `node <<'EOF'` for non-trivial scripts.

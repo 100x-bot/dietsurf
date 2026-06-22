@@ -4,12 +4,12 @@ import { spawn } from "node:child_process";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { PROJECT_FILES } from "../src/kernel/project.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const unpacked = path.join(root, "build", "unpacked");
 const runtimeDir = path.join(unpacked, "runtime");
 const esbuild = path.join(root, "node_modules", ".bin", process.platform === "win32" ? "esbuild.cmd" : "esbuild");
+const packagedFiles = ["manifest.json", "sidepanel.html", "etc/llm.json"];
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
@@ -18,17 +18,10 @@ function run(command, args) {
   });
 }
 
-async function copyIntoUnpacked(file) {
-  const relative = file.replace(/^\/+/, "");
-  const from = path.join(root, relative);
+async function copyIntoUnpacked(relative) {
   const to = path.join(unpacked, relative);
   await mkdir(path.dirname(to), { recursive: true });
-  try {
-    await copyFile(from, to);
-  } catch (error) {
-    if (error?.code !== "ENOENT" || !(/^\/home\//.test(file) || /^\/var\//.test(file))) throw error;
-    await writeFile(to, "");
-  }
+  await copyFile(path.join(root, relative), to);
 }
 
 async function injectLocalLlmKey() {
@@ -44,7 +37,7 @@ async function injectLocalLlmKey() {
 
 await rm(unpacked, { recursive: true, force: true });
 await mkdir(runtimeDir, { recursive: true });
-for (const file of PROJECT_FILES) await copyIntoUnpacked(file);
+for (const file of packagedFiles) await copyIntoUnpacked(file);
 const injectedKey = await injectLocalLlmKey();
 
 await run(esbuild, [

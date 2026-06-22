@@ -1,50 +1,35 @@
-import { generateText, jsonSchema, tool } from "ai";
+import { generateText } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 function messagesOf(input) {
   return Array.isArray(input) ? input : [{ role: "user", content: String(input) }];
 }
 
-function bashTool() {
-  return tool({
-    description: "Run one command in the DietSurf bash-like shell.",
-    inputSchema: jsonSchema({
-      type: "object",
-      properties: {
-        command: {
-          type: "string",
-          description: "The shell command to execute."
-        }
-      },
-      required: ["command"],
-      additionalProperties: false
-    })
-  });
+async function configOf(source) {
+  const config = source.loadConfig ? await source.loadConfig() : source.config;
+  if (!config || typeof config !== "object") throw new Error("missing LLM config");
+  return config;
 }
 
-export function createLlmApi(runtime) {
-  async function query(input, options = {}) {
-    runtime.throwIfAborted();
-    const { baseUrl, apiKey, apiKeyEnv, model } = JSON.parse(await runtime.readFile(runtime.llmConfigPath));
-    const key = apiKey || runtime.env[apiKeyEnv];
-    if (!key) throw new Error(`missing ${runtime.llmConfigPath} apiKey${apiKeyEnv ? ` or ${apiKeyEnv}` : ""}`);
+export function createLlmApi(source = {}) {
+  async function query(input) {
+    const { baseUrl, apiKey, apiKeyEnv, model } = await configOf(source);
+    const key = apiKey || source.env?.[apiKeyEnv];
+    if (!key) throw new Error(`missing LLM apiKey${apiKeyEnv ? ` or ${apiKeyEnv}` : ""}`);
+    if (!baseUrl) throw new Error("missing LLM baseUrl");
+    if (!model) throw new Error("missing LLM model");
 
     const provider = createOpenAICompatible({ name: "byok", apiKey: key, baseURL: baseUrl });
-    const request = {
+    const result = await generateText({
       model: provider(model),
       messages: messagesOf(input),
       temperature: 0,
       allowSystemInMessages: true,
-      abortSignal: runtime.abortSignal
-    };
+      abortSignal: source.abortSignal
+    });
 
-    if (options.tool === "bash") request.tools = { bash: bashTool() };
-
-    const result = await generateText(request);
-    runtime.throwIfAborted();
     return {
       text: result.text.trim(),
-      toolCalls: result.toolCalls,
       messages: result.response.messages,
       finishReason: result.finishReason
     };
