@@ -9,9 +9,7 @@ SWE-style loop in the extension service worker:
 3. Append the execution result as an observation.
 4. Continue until the LLM answers without a JavaScript block.
 
-There is no bash layer, Linux command surface, virtual filesystem, in-browser
-Git, Node runtime, `done(...)`, or tool schema. A normal answer without a
-JavaScript block is the only stop signal.
+A response from LLM without a JavaScript block is the only stop signal.
 
 ## Runtime Context
 
