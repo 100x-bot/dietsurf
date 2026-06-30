@@ -1,6 +1,6 @@
-import { runAgent } from "./src/agent.js";
-import { runServiceCode } from "./src/kernel/jslike.js";
-import { createLlmApi } from "./src/llm/api.js";
+import { runAgent } from "../agent.js";
+import { runServiceCode } from "../kernel/jslike.js";
+import { createLlmApi } from "../llm/api.js";
 
 const activeRuns = new Map();
 
@@ -59,6 +59,10 @@ async function loadLlmConfig() {
   };
 }
 
+async function openOptionsForMissingKey() {
+  await Promise.resolve(chrome.runtime.openOptionsPage()).catch(() => undefined);
+}
+
 function serviceContext(signal) {
   return {
     chrome,
@@ -66,7 +70,8 @@ function serviceContext(signal) {
       checkAbort(signal);
       const api = createLlmApi({
         loadConfig: loadLlmConfig,
-        abortSignal: signal
+        abortSignal: signal,
+        onMissingKey: openOptionsForMissingKey
       });
       return api.llm(input);
     },
@@ -96,7 +101,8 @@ async function executeJavaScript(code, signal) {
 async function runGoal(goal, signal) {
   const llm = createLlmApi({
     loadConfig: loadLlmConfig,
-    abortSignal: signal
+    abortSignal: signal,
+    onMissingKey: openOptionsForMissingKey
   });
 
   return runAgent({
@@ -122,27 +128,30 @@ async function withRun(kind, fn) {
   }
 }
 
-chrome.runtime.onInstalled.addListener(enableActionSidePanel);
 enableActionSidePanel();
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  (async () => {
-    if (message?.type === "interrupt") {
-      for (const controller of activeRuns.values()) controller.abort();
-      return { ok: true, result: activeRuns.size ? "aborting" : "idle" };
-    }
+async function handleMessage(message) {
+  if (message?.type === "interrupt") {
+    for (const controller of activeRuns.values()) controller.abort();
+    return { ok: true, result: activeRuns.size ? "aborting" : "idle" };
+  }
 
-    if (message?.type === "runGoal") {
-      return {
-        ok: true,
-        result: await withRun("goal", (signal) => runGoal(String(message.goal || ""), signal))
-      };
-    }
+  if (message?.type === "runGoal") {
+    return {
+      ok: true,
+      result: await withRun("goal", (signal) => runGoal(String(message.goal || ""), signal))
+    };
+  }
 
-    throw new Error(`unknown message: ${message?.type}`);
-  })().then(
-    (response) => sendResponse(response),
-    (error) => sendResponse({ ok: false, error: toErrorText(error) })
-  );
-  return true;
+  if (message?.type === "getLlmConfig") {
+    return { ok: true, result: await loadLlmConfig() };
+  }
+
+  throw new Error(`unknown message: ${message?.type}`);
+}
+
+({
+  handleInstalled: enableActionSidePanel,
+  handleMessage,
+  toErrorText
 });

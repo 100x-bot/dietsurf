@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-import "dotenv/config";
 import { spawn } from "node:child_process";
-import { access, chmod, copyFile, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, mkdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -32,26 +31,13 @@ async function exists(file) {
   }
 }
 
-async function injectLocalLlmKey(dir) {
-  if (!process.env.LILAC_API_KEY) return false;
-  await writeFile(path.join(dir, "etc", "llm.json"), JSON.stringify({
-    baseUrl: "https://api.getlilac.com/v1",
-    apiKey: process.env.LILAC_API_KEY,
-    apiKeyEnv: "LILAC_API_KEY",
-    model: "minimaxai/minimax-m2.7"
-  }, null, 2));
-  return true;
-}
-
 if (!chromePath) throw new Error("set CHROME_PATH");
 
 await run("npm", ["run", "build"]);
 await mkdir(keyDir, { recursive: true });
-const injectedKey = await injectLocalLlmKey(unpacked);
 await rm(packSrc, { recursive: true, force: true });
 await mkdir(path.dirname(packSrc), { recursive: true });
 await cp(unpacked, packSrc, { recursive: true });
-await injectLocalLlmKey(packSrc);
 
 const args = [`--pack-extension=${packSrc}`];
 if (await exists(pemOut)) args.push(`--pack-extension-key=${pemOut}`);
@@ -70,5 +56,4 @@ const { size } = await stat(crxOut);
 
 console.log(`built ${path.relative(root, crxOut)} (${Math.round(size / 1024)} KiB)`);
 console.log(`load unpacked from ${path.relative(root, unpacked)}`);
-if (injectedKey) console.log("injected LILAC_API_KEY into ignored build artifacts");
 if (await exists(pemOut)) console.log(`using signing key ${pemOut}`);

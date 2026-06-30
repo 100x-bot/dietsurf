@@ -47,8 +47,8 @@ The side panel is a transcript:
 ## Configuration
 
 LLM configuration is loaded from packaged `etc/llm.json` plus optional
-`chrome.storage.local.llmConfig` overrides. Host-side builds may inject
-`LILAC_API_KEY` into ignored `build/unpacked` artifacts for local testing.
+`chrome.storage.local.llmConfig` overrides. Packaged defaults do not include API
+keys; keys are entered from the extension options page.
 
 ## Verification
 

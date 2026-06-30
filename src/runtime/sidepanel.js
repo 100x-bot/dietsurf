@@ -56,9 +56,32 @@ function setStyle() {
       line-height: 32px;
     }
 
+    #dietsurf-header-spacer {
+      flex: 1;
+    }
+
     #dietsurf-title {
       color: #35f06b;
       font-weight: 800;
+    }
+
+    #dietsurf-options-button {
+      box-sizing: border-box;
+      min-height: 22px;
+      border: 1px solid #2f2f2f;
+      border-radius: 6px;
+      padding: 2px 8px;
+      background: #121212;
+      color: #d7d7d7;
+      font: inherit;
+      font-size: 11px;
+      line-height: 16px;
+      cursor: pointer;
+    }
+
+    #dietsurf-options-button:hover {
+      border-color: #35f06b;
+      color: #35f06b;
     }
 
     #dietsurf-context {
@@ -126,6 +149,22 @@ function appendBlock(output, value = "") {
   output.scrollTop = output.scrollHeight;
 }
 
+async function runSlashCommand(text, output) {
+  if (text === "/help") {
+    appendBlock(output, "/help        show commands");
+    appendBlock(output, "/hard-reset  reset DietSurf state and reload");
+    return;
+  }
+
+  if (text === "/hard-reset") {
+    const result = await send({ type: "command", command: "hard-reset" });
+    appendBlock(output, result || "resetting");
+    return;
+  }
+
+  appendBlock(output, `unknown command: ${text.split(/\s+/, 1)[0]}`);
+}
+
 function render() {
   setStyle();
   const app = document.getElementById("app");
@@ -145,6 +184,15 @@ function render() {
   context.id = "dietsurf-context";
   context.textContent = "service context";
 
+  const spacer = document.createElement("span");
+  spacer.id = "dietsurf-header-spacer";
+
+  const options = document.createElement("button");
+  options.id = "dietsurf-options-button";
+  options.type = "button";
+  options.textContent = "Config";
+  options.title = "Open options";
+
   const output = document.createElement("pre");
   output.id = "dietsurf-log";
 
@@ -160,7 +208,7 @@ function render() {
   input.rows = 1;
   input.placeholder = "goal";
 
-  header.append(title, context);
+  header.append(title, context, spacer, options);
   root.append(header, output, status, input);
   app.append(root);
 
@@ -205,6 +253,10 @@ function render() {
     return false;
   });
 
+  options.addEventListener("click", () => {
+    chrome.runtime.openOptionsPage();
+  });
+
   input.addEventListener("input", () => {
     input.style.height = "auto";
     input.style.height = input.scrollHeight + "px";
@@ -226,6 +278,18 @@ function render() {
     input.value = "";
     input.style.height = "auto";
     appendBlock(output, `> ${goal}`);
+
+    if (goal.startsWith("/")) {
+      try {
+        await runSlashCommand(goal, output);
+        stopStatus("complete");
+      } catch (error) {
+        stopStatus("error");
+        appendBlock(output, error && error.message ? error.message : String(error));
+      }
+      return;
+    }
+
     running = true;
     interrupting = false;
     startStatus(goal);

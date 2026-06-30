@@ -13,9 +13,13 @@ async function configOf(source) {
 
 export function createLlmApi(source = {}) {
   async function query(input) {
-    const { baseUrl, apiKey, apiKeyEnv, model } = await configOf(source);
+    const config = await configOf(source);
+    const { baseUrl, apiKey, apiKeyEnv, model } = config;
     const key = apiKey || source.env?.[apiKeyEnv];
-    if (!key) throw new Error(`missing LLM apiKey${apiKeyEnv ? ` or ${apiKeyEnv}` : ""}`);
+    if (!key) {
+      await source.onMissingKey?.(config);
+      throw new Error("missing LLM apiKey");
+    }
     if (!baseUrl) throw new Error("missing LLM baseUrl");
     if (!model) throw new Error("missing LLM model");
 
@@ -23,7 +27,11 @@ export function createLlmApi(source = {}) {
     const result = await generateText({
       model: provider(model),
       messages: messagesOf(input),
-      temperature: 0,
+      temperature: Number.isFinite(config.temperature) ? config.temperature : 0,
+      topP: Number.isFinite(config.topP) ? config.topP : undefined,
+      maxOutputTokens: Number.isFinite(config.maxOutputTokens) ? config.maxOutputTokens : undefined,
+      presencePenalty: Number.isFinite(config.presencePenalty) ? config.presencePenalty : undefined,
+      frequencyPenalty: Number.isFinite(config.frequencyPenalty) ? config.frequencyPenalty : undefined,
       allowSystemInMessages: true,
       abortSignal: source.abortSignal
     });

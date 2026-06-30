@@ -6,12 +6,13 @@
     "default_title": "DietSurf"
   },
   "background": {
-    "service_worker": "runtime/worker.js",
+    "service_worker": "runtime/worker-bootstrap.js",
     "type": "module"
   },
   "side_panel": {
     "default_path": "sidepanel.html"
   },
+  "options_page": "options.html",
   "permissions": ["sidePanel", "storage", "tabs", "scripting"],
   "host_permissions": ["<all_urls>"]
 }
